@@ -15,8 +15,8 @@ hr() { printf '\n--- %s ---\n' "$1"; }
 
 hr 'token'
 if [[ -n "${CF_API_TOKEN:-}" ]]; then
-    token = "$CF_API_TOKEN"
-elif [[ -r "$CF_TOKEN_FILE" ]]
+    token="$CF_API_TOKEN"
+elif [[ -r "$CF_TOKEN_FILE" ]]; then
     token=$(tr -d '[:space:]' < "$CF_TOKEN_FILE")
 else
     printf 'no token: set CF_API_TOKEN or create %s\n' "$CF_TOKEN_FILE" >&2
