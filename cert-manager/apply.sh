@@ -26,7 +26,7 @@ fi
 hr 'verify cloudflare token'
 verify=$( \
     curl -sS -H "Authorization: Bearer $token" \
-    htps://api.cloudflare.com/client/v4/user/tokens/verify
+    https://api.cloudflare.com/client/v4/user/tokens/verify
 )
 
 printf '%s\n' "$verify"
