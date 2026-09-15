@@ -46,9 +46,9 @@ $K get certificate "$NAME" -o wide
 
 hr 'secret exists with both keys'
 if $K get "secret/$SECRET" >/dev/null 2>&1; then
-    for key in tls.crt tls.key; do
+    for key in 'tls\.crt' 'tls\.key'; do
         if ! $K get "secret/$SECRET" -o jsonpath="{.data.$key}" | grep -q .; then
-            fail "secret missing $key"
+            fail "secret missing ${key//\\/}"
         fi
     done
 else
@@ -63,8 +63,8 @@ if [[ -n "$crt" ]]; then
     hr 'subject alternative names'
     sans=$(echo "$crt" | openssl x509 -noout -ext subjectAltName)
     printf '%s\n' "$sans"
-    grep -q "DNS:$DOMAIN" <<<"$sans" | fail "SAN missing $DOMAIN"
-    grep -q "DNS:\*\.$DOMAIN" <<<"$sans" | fail "SAN missing *.$DOMAIN"
+    grep -q "DNS:$DOMAIN" <<<"$sans" || fail "SAN missing $DOMAIN"
+    grep -q "DNS:\*\.$DOMAIN" <<<"$sans" || fail "SAN missing *.$DOMAIN"
 
     hr 'issued by staging CA'
     issuer=$(echo "$crt" | openssl x509 -noout -issuer)
