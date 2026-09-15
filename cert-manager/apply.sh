@@ -39,7 +39,7 @@ $K apply -f \
 K="$K -n $NS"
 
 hr 'wait for rollout'
-for d in cert-manger cert-manager-webook cert-manager-cainjector; do
+for d in cert-manager cert-manager-webook cert-manager-cainjector; do
     $K -n "$NS" rollout status "deploy/$d" --timeout="$TIMEOUT"
 done
 
