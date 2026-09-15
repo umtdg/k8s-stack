@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pfo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pfo
+  template:
+    metadata:
+      labels:
+        app: pfo
+    spec:
+      containers:
+        - name: pfo
+          image: umtdg/pfo:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: pfo-config
+            - secretRef:
+                name: pfo-secret

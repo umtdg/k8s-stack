@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+    name: pfo-config
+    labels:
+        app: pfo
+data:
+    SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/portfolio"
+    SPRING_JPA_HIBERNATE_DDL_AUTO: "validate"
