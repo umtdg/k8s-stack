@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager-test
+
+---
+
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: probe
+  namespace: cert-manager-test
+spec:
+  secretName: probe-tls
+  issuerRef:
+    name: letsencrypt-staging
+    kind: ClusterIssuer
+  privateKey:
+    rotationPolicy: Always
+  dnsNames:
+    - probe.umtdg.com
+    - "*.probe.umtdg.com"
+
