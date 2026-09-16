@@ -2,8 +2,6 @@
 
 set -euo pipefail
 
-here="$(realpath "$(dirname "${BASH_SOURCE[0]}")")"
-
 CHART_NAME='ingress-nginx'
 CHART_VERSION="${CHART_VERSION:-4.15.1}"
 VIP="${VIP:-10.10.10.200}"
@@ -17,7 +15,7 @@ helm repo update "$CHART_NAME" >/dev/null
 helm upgrade --install "$CHART_NAME" "$CHART_NAME"/"$CHART_NAME" \
     --namespace "$NS" --create-namespace \
     --version "$CHART_VERSION" \
-    -f "$here/values.yaml" \
+    -f "values.yaml" \
     --wait --timeout $TIMEOUT
 
 declare ingress_vip
