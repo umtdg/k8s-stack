@@ -86,7 +86,8 @@ $K -n "$NS" wait --for=condition=Ready "cluster/$CLUSTER" --timeout="$TIMEOUT"
 
 hr 'wait for databases'
 for db in portfolio gitea; do
-    $K -n "$NS" wait --for=condition=Ready "database/$db" --timeout="$DB_TIMEOUT"
+    $K -n "$NS" wait --for=jsonpath='{.status.applied}'=true \
+        "database/$db" --timeout="$DB_TIMEOUT"
 done
 
 hr 'done'
