@@ -56,6 +56,19 @@ $K apply --server-side -f \
 hr 'wait for operator'
 $K -n "$OPERATOR_NS" rollout status deploy/cnpg-controller-manager --timeout="$TIMEOUT"
 
+hr 'wait for webhook service endpoints'
+for _ in {1..60}; do
+    if $K -n "$OPERATOR_NS" get endpointslice \
+        -l kubernetes.io/service-name=cnpg-webhook-service \
+        -o jsonpath='{.items[*].endpoints[*].addresses[*]}' 2>/dev/null \
+        | grep -q .; then
+
+        break
+    fi
+
+    sleep 2
+done
+
 hr 'wait for CRDs'
 for crd in clusters.postgresql.cnpg.io databases.postgresql.cnpg.io; do
     $K wait --for=condition=Established "crd/$crd" --timeout="$CRD_TIMEOUT"
