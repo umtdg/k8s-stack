@@ -22,12 +22,12 @@ spec:
       cpu: 250m
       memory: 512Mi
     limits:
-      memory 2Gi
+      memory: 2Gi
 
   postgresql:
     parameters:
       max_connections: "100"
-      shared_buffers: "256M"
+      shared_buffers: "256MB"
 
   bootstrap:
     initdb:
