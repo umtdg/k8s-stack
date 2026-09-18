@@ -87,7 +87,7 @@ else
 fi
 
 hr 'write, read back, drop'
-sql='create table if not exists probe(v test); truncate probe; insert into probe values ($$ok$$); select -v from probe; drop table probe;'
+sql='create table if not exists probe(v text); truncate probe; insert into probe values ($$ok$$); select -v from probe; drop table probe;'
 if out=$($K exec "$NAME" -- psql -At -c "$sql" 2>&1); then
     printf '%s\n' "$out"
     grep -qx 'ok' <<<"$out" || fail "did not read back the written row"
@@ -109,11 +109,11 @@ ro=$($K exec "$NAME" -- psql -At -c "$sql" 2>/dev/null)
 [[ "$ro" == 'f' ]] || fail "pg-rw resolved to a standby (pg_is_in_recovery=${ro:-<none>})"
 
 hr 'cross-database isolation (informational)'
-cat <<<'EOF'
+cat <<'EOF'
 
 Postgres grants CONNECT on every database to PUBLIC by default, so the portfolio
 role can open a connection to the gitea database and vica versa. Neither can
-read the other\'s tables. If that is not good enough:
+read the other's tables. If that is not good enough:
 
     revoke connect on database gitea from public;
     grant connect on database gitea to gitea;
