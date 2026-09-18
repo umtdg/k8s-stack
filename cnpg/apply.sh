@@ -26,10 +26,10 @@ create_role_secret() {
         printf 'secret/%s exists in %s, keeping\n' "$secret" "$NS"
         password=$( \
             $K -n "$NS" get "secret/$secret" -o jsonpath='{.data.password}' \
-            | base64-d \
+            | base64 -d \
         )
     else
-        password=$(openssl rand -hex 48)
+        password=$(openssl rand -hex 32)
         $K -n "$NS" create secret generic "$secret" \
             --type=kubernetes.io/basic-auth \
             --from-literal=username="$role" \
@@ -61,9 +61,6 @@ for crd in clusters.postgresql.cnpg.io databases.postgresql.cnpg.io; do
     $K wait --for=condition=Established "crd/$crd" --timeout="$CRD_TIMEOUT"
 done
 
-hr 'namespace'
-$K get "ns/$NS" >/dev/null 2>&1 || $K create ns "$NS"
-
 hr 'role secrets'
 create_role_secret portfolio pfo-db-creds default pfo-secret
 create_role_secret gitea gitea-db-creds
@@ -76,7 +73,7 @@ $K -n "$NS" wait --for=condition=Ready "cluster/$CLUSTER" --timeout="$TIMEOUT"
 
 hr 'wait for databases'
 for db in portfolio gitea; do
-    $K -n "$NS" wait --for=condition=Ready "database/$db" --timeout"$DB_TIMEOUT"
+    $K -n "$NS" wait --for=condition=Ready "database/$db" --timeout="$DB_TIMEOUT"
 done
 
 hr 'done'

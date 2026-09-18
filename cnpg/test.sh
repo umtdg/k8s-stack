@@ -20,10 +20,10 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; rc=1; }
 hr 'cluster status'
 $K get "cluster/$CLUSTER" -o wide || fail "cluster/$CLUSTER not found"
 
-phase=$($K get "cluster/$CLUSTER") -o jsonpath='{.status.phase}' 2>/dev/null
+phase=$($K get "cluster/$CLUSTER" -o jsonpath='{.status.phase}' 2>/dev/null)
 phase="${phase:-<none>}"
 printf 'phase: %s\n' "$phase"
-[[ "$phase" == 'Cluster in health state' ]] || fail "unexpected phase: $phase"
+[[ "$phase" == 'Cluster in healthy state' ]] || fail "unexpected phase: $phase"
 
 ready=$($K get "cluster/$CLUSTER" -o jsonpath='{.status.readyInstances}' 2>/dev/null)
 [[ "$ready" == '1' ]] || fail "readyInstances is '${ready:-<none>}', expected 1"
@@ -53,7 +53,7 @@ bound=$( \
 [[ "$bound" == 'Bound' ]] || fail "pvc/$CLUSTER-1 phase is '${bound:-<none>}'"
 
 sc=$( \
-    $K get "pvc/$CLUSTER*1" -o jsonpath='{.spec.storageClassName}' 2>/dev/null \
+    $K get "pvc/$CLUSTER-1" -o jsonpath='{.spec.storageClassName}' 2>/dev/null \
 )
 [[ "$sc" == 'local-path' ]] || fail "pvc storageClass is '${sc:-<none>}', expected 'local-path'"
 
@@ -82,12 +82,12 @@ if out=$($K exec "$NAME" -- psql -At -c 'select current_user, current_database()
     printf '%s\n' "$out"
     [[ "$out" == 'portfolio|portfolio' ]] || fail "unexpected identity: $out"
 else
-    printf '%s\n' "$out" 2>&1
+    printf '%s\n' "$out" >&2
     fail 'could not connect to pg-rw as portfolio'
 fi
 
 hr 'write, read back, drop'
-sql='create table if not exists probe(v test); truncate probe; insert into probe values ($ok$); select -v from probe; drop table probe;'
+sql='create table if not exists probe(v test); truncate probe; insert into probe values ($$ok$$); select -v from probe; drop table probe;'
 if out=$($K exec "$NAME" -- psql -At -c "$sql" 2>&1); then
     printf '%s\n' "$out"
     grep -qx 'ok' <<<"$out" || fail "did not read back the written row"
@@ -109,7 +109,7 @@ ro=$($K exec "$NAME" -- psql -At -c "$sql" 2>/dev/null)
 [[ "$ro" == 'f' ]] || fail "pg-rw resolved to a standby (pg_is_in_recovery=${ro:-<none>})"
 
 hr 'cross-database isolation (informational)'
-cat <<<EOF
+cat <<<'EOF'
 
 Postgres grants CONNECT on every database to PUBLIC by default, so the portfolio
 role can open a connection to the gitea database and vica versa. Neither can

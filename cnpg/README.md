@@ -16,5 +16,5 @@ Fix from the psql:
 
 ```psql
 revoke connect on database gitea from public;
-grant connect on database gitea from gitea;
+grant connect on database gitea to gitea;
 ```
