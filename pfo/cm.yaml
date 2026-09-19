@@ -5,5 +5,5 @@ metadata:
     labels:
         app: pfo
 data:
-    SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/portfolio"
+    SPRING_DATASOURCE_URL: "jdbc:postgresql://pg-rw.cnpg.svc.cluster.local:5432/portfolio"
     SPRING_JPA_HIBERNATE_DDL_AUTO: "validate"
