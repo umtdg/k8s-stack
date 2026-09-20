@@ -1,0 +1,76 @@
+global:
+  domain: argo.umtdg.com
+
+crds:
+  install: true
+  keep: true
+
+configs:
+  params:
+    # Without this, nginx speaks HTTPS to a backend that redirects to HTTPS and
+    # the browser loops.
+    server.insecure: true
+
+  cm:
+    # This matters for adopting resources that Helm already labelled. Changing
+    # it later forces a re-adoption of everything.
+    application.resourceTrackingMethod: annotation
+    timeout.reconciliation: 180s
+
+# Single user, no SSO
+dex:
+  enabled: false
+
+# No Slack/email targets
+notifications:
+  enabled: false
+
+controller:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+repoServer:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 192Mi
+    limits:
+      memory: 1Gi
+
+server:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    # This makes nginx to fall back to `controller.extraArgs.default-ssl-certificate`
+    # which is the default ingress-nginx/wildcard-tls.
+    tls: false
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/backend-protocol: HTTP
+
+redis:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+applicationSet:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi

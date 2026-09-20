@@ -1,0 +1,27 @@
+apiVersion: argoproj.v1/v1alpha1
+kind: Application
+metadata:
+  name: argocd-probe
+  namespace: argocd
+  finalizers:
+    # Makes `kubectl delete` cascade. Argo prunes deployed resources and
+    # namespace before the Application object dissapears.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/argoproj/argocd-example-apps.git
+    targetRevision: HEAD
+    path: guestbook
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd-test
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

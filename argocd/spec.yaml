@@ -1,0 +1,34 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: homelab
+  namespace: argocd
+spec:
+  description: homelab infrastructure and applications
+
+  # TODO(umtdg): Update k8s-stack repo link after migrating to Gitea
+  sourceRepos:
+    - https://github.com/umtdg/k8s-stack
+    - https://kubernetes.github.io/ingress-nginx
+    - https://charts.jetstack.io
+    - https://argoproj.github.io/argo-helm
+    - https://dl.gitea.com/charts
+    - https://cloudnative-pg.github.io/charts
+    - https://metallb.github.io/metallb
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+
+  # TODO(umtdg): Search if restricting these would gain us anything
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  # TODO(umtdg): Search if restricting these would gain us anything
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  orphanedResources:
+    warn: true
