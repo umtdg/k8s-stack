@@ -68,7 +68,7 @@ EOF
 fi
 
 hr 'app project'
-sed "s|REPO_URL|$REPO_URL|g" "$SPEC" | $K apply -f -
+$K apply -f "$SPEC"
 
 hr 'deployed resources for preview'
 $K get pods,ingress,appproject
