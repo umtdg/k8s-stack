@@ -6,9 +6,8 @@ metadata:
 spec:
   description: homelab infrastructure and applications
 
-  # TODO(umtdg): Update k8s-stack repo link after migrating to Gitea
   sourceRepos:
-    - https://github.com/umtdg/k8s-stack
+    - git@github.com:umtdg/k8s-stack
     - https://kubernetes.github.io/ingress-nginx
     - https://charts.jetstack.io
     - https://argoproj.github.io/argo-helm

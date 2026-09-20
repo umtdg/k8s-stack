@@ -15,14 +15,14 @@ TIMEOUT="${TIMEOUT:-5m}"
 
 REPO_URL="${REPO_URL:-git@github.com:umtdg/k8s-stack.git}"
 REPO_NAME="${REPO_NAME:-k8s-stack}"
-REPO_KEY_FILE="${REPO_KEY_FILE:-$HOME/.ssh.argocd_repo}"
+REPO_KEY_FILE="${REPO_KEY_FILE:-$HOME/.ssh/argocd_repo}"
 
-K="kubectl -n $N"
+K="kubectl -n $NS"
 
 hr() { printf '\n--- %s ---\n' "$1"; }
 
 hr "install $CHART_NAME $CHART_VERSION"
-helm repo add argo "$CHART_REPO" >/dev/null
+helm repo add --force-update argo "$CHART_REPO" >/dev/null
 helm repo update argo >/dev/null
 
 helm upgrade --install "$RELEASE" "argo/$CHART_NAME" \
@@ -31,28 +31,16 @@ helm upgrade --install "$RELEASE" "argo/$CHART_NAME" \
     -f "$VALUES" \
     --wait --timeout "$TIMEOUT"
 
-resource="sts/$RELEASE-application-controller"
-hr "wait for $resource"
-$K rollout status "$resource" --timeout="$TIMEOUT"
-printf '%s: OK\n' "$resource"
-
-for d in server repo-server applicationset-controller redis; do
-    resource="deploy/$RELEASE-$d"
-    hr "wait for $resource"
-    $K rollout status "$resource" --timeout="$TIMEOUT"
-    printf '%s: OK\n' "$resource"
-done
-
 hr 'verify ingress'
-ingres_host=$($K get "ingress/$RELEASE-server" -o jsonpath='{.spec.rules[0].host}')
+ingress_host=$($K get "ingress/$RELEASE-server" -o jsonpath='{.spec.rules[0].host}')
 [[ "$ingress_host" == "$HOST" ]] || {
-    printf "ingress host is '%s', expected '%s'" "${ingress_host:-<none>}" "$HOST" >&2
+    printf "ingress host is '%s', expected '%s'\n" "${ingress_host:-<none>}" "$HOST" >&2
     exit 1
 }
 
 ingress_vip=$($K get "ingress/$RELEASE-server" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 [[ "$ingress_vip" == "$VIP" ]] || {
-    printf "ingress VIP is '%s', expected '%s'" "${ingress_vip:-<none>}" "$VIP" >&2
+    printf "ingress VIP is '%s', expected '%s'\n" "${ingress_vip:-<none>}" "$VIP" >&2
     exit 1
 }
 
@@ -60,7 +48,6 @@ hr 'repository credentials'
 if [[ -r "$REPO_KEY_FILE" ]]; then
     $K create secret generic "repo-$REPO_NAME" \
         --from-literal=type=git \
-        --from-literal=name="$REPO_NAME" \
         --from-literal=url="$REPO_URL" \
         --from-file=sshPrivateKey="$REPO_KEY_FILE" \
         --dry-run=client -o yaml | $K apply -f -
@@ -73,8 +60,8 @@ Skipping repo key secret due to missing key file '$REPO_KEY_FILE'.
 
 Generate one and register the public key in Github repository as read-only:
 
-    ssh-keygen -t ed25519 -N ' ' -C argocd -f $REPO_KEY_FILE
-    cat $REPO_KEY_FILE
+    ssh-keygen -t ed25519 -N '' -C argocd -f $REPO_KEY_FILE
+    cat $REPO_KEY_FILE.pub
 
 Then re-run this script.
 EOF
@@ -95,7 +82,7 @@ cat <<EOF
 
 UI:         https://$HOST
 user:       admin
-password:   ${admin_pw:<initial secret already deleted>}
+password:   ${admin_pw:-<initial secret already deleted>}
 
 The CLI needs --grpc-web because ingress-nginx terminates TLS and does not
 proxy raw gRPC on this ingress. Make it permanent:

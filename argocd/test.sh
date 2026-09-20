@@ -7,7 +7,7 @@ NS="${NS:-argocd}"
 RELEASE="${RELEASE:-argocd}"
 APP="${APP:-argocd-probe}"
 APP_NS="${APP_NS:-argocd-test}"
-HOST="${HOST:-argocd.umtdg.com}"
+HOST="${HOST:-argo.umtdg.com}"
 VIP="${VIP:-10.10.10.200}"
 TIMEOUT="${TIMEOUT:-180s}"
 SYNC_TIMEOUT="${SYNC_TIMEOUT:-300s}"
@@ -26,26 +26,64 @@ ok() { printf 'OK: %s\n' "$1"; }
 
 curl_api() { curl -sk --resolve "$HOST:443:$VIP" "$@"; }
 
-cleanup() {
-    [[ "$KEEP" == '1' ]] && { printf '\nKeeping %s in place since KEEP=1\n' "$APP"; return; }
+json_escape() {
+    local s=$1
+    s=${s//\\/\\\\} # escape backslash first, or the next line doubles its own output
+    s=${s//\"/\\\"} # escape double quote
+    printf '%s' "$s"
+}
 
+remove_finalizers() {
+    $K patch "application/$APP" --type=merge \
+        -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1
+    $K delete "application/$APP" --ignore-not-found "$@"
+}
+
+cleanup() {
     hr 'cleanup'
-    if ! timeout "$DELETE_TIMEOUT" kubectl delete -f "$MANIFEST" --ignore-not-found --wait=true; then
+    if [[ "$KEEP" == '1' ]]; then
+        printf '\nKeeping %s in place since KEEP=1\n' "$APP"
+        return
+    fi
+
+    if [[ ! -f "$MANIFEST" ]]; then
+        printf '\nSkipping cleanup without a manifest file\n'
+        return
+    fi
+
+    if ! kubectl delete -f "$MANIFEST" --ignore-not-found --wait=true --timeout="$DELETE_TIMEOUT"; then
         printf 'delete timed out, removing finalizer\n' >&2
-        $K patch "application/$APP" --type=merge \
-            -p '{"metadata":{"finalizers":null}}' 2>/dev/null
-        $K delete "application/$APP" --ignore-not-found --wait=false
+        remove_finalizers --wait=false
     fi
 
     kubectl delete ns "$APP_NS" --ignore-not-found --wait=false
 }
 trap cleanup EXIT
 
+debug_application() {
+    hr 'debug: application'
+    $K get "application/$APP" -o wide 2>/dev/null
+    $K get "application/$APP" -o jsonpath='
+conditions: {.status.conditions}
+operation:  {.status.operationState.phase} {.status.operationState.message}
+' 2>/dev/null
+
+    hr 'debug: resource tree'
+    $K get "application/$APP" \
+        -o jsonpath='{range .status.resources[*]}{.kind}/{.name} {.status} {.health.status}{"\n"}{end}' \
+        2>/dev/null
+
+    hr 'debug: repo-server'
+    $K logs "deploy/$RELEASE-repo-server" --tail=40
+
+    hr 'debug: application-controller'
+    $K logs "sts/$RELEASE-application-controller" --tail=40
+}
+
 [[ -f "$MANIFEST" ]] || { fail "manifest not found: $MANIFEST"; exit 1; }
 
 hr 'helm release'
-helm -n "$NS" list --filter "^$RELEASE\$" \
-    || fail 'helm release not found'
+helm -n "$NS" status "$RELEASE" >/dev/null 2>&1 || fail 'helm release not found'
 
 hr 'workloads'
 $K get pods -o wide
@@ -61,13 +99,13 @@ hr 'crds established'
 for crd in applications.argoproj.io applicationsets.argoproj.io appprojects.argoproj.io; do
     if kubectl wait --for=condition=Established "crd/$crd" \
         --timeout="$CRD_TIMEOUT" >/dev/null 2>&1; then
-        ok "$cd"
+        ok "$crd"
     else
         fail "$crd not Established"
     fi
 done
 
-hr 'server runs insecure (no TLS behing nginx)'
+hr 'server runs insecure (no TLS behind nginx)'
 insecure=$( \
     $K get cm argocd-cmd-params-cm -o jsonpath='{.data.server\.insecure}' \
     2>/dev/null \
@@ -101,7 +139,7 @@ hr "https://$HOST through VIP"
 url="https://$HOST/"
 code=''
 for _ in {1..15}; do
-    code=$(curl_api -o /dev/null -w '${http_code}' --max-time 5 "$url" || true)
+    code=$(curl_api -o /dev/null -w '%{http_code}' --max-time 5 "$url" || true)
     [[ "$code" == '200' ]] && break
     sleep 2
 done
@@ -139,7 +177,7 @@ fi
 
 token=''
 if [[ -n "$pw" ]]; then
-    body=$(printf '{"username":"admin","password":"%s"}' "$pw")
+    body=$(printf '{"username":"admin","password":"%s"}' "$(json_escape "$pw")")
     token=$(
         curl_api -X POST -H 'Content-Type: application/json' \
             -d "$body" "https://$HOST/api/v1/session" 2>/dev/null \
@@ -156,7 +194,7 @@ else
     echo 'skipping api check'
 fi
 
-hr 'configures repositories'
+hr 'configured repositories'
 if [[ -z "$token" ]]; then
     echo 'skipping, admin token is empty'
 else
@@ -184,14 +222,19 @@ fi
 
 hr 'app project'
 if $K get appproject homelab >/dev/null 2>&1; then
-    ok 'approject/homelab present'
+    ok 'appproject/homelab present'
 else
-    fail 'approject/homelab missing'
+    fail 'appproject/homelab missing'
 fi
 
 hr 'pre-clean probe'
-kubectl delete -f "$MANIFEST" --ignore-not-found --wait=true >/dev/null 2>&1
-kubectl delete ns "$APP_NS" --ignore-not-found --wait=true >/dev/null 2>&1
+if ! kubectl delete -f "$MANIFEST" --ignore-not-found \
+    --wait=true --timeout="$DELETE_TIMEOUT" >/dev/null 2>&1; then
+    printf 'stale %s stuck in deletion. removing finalizer\n' "$APP" >&2
+    remove_finalizers --wait=true --timeout=30s
+fi
+kubectl delete ns "$APP_NS" --ignore-not-found \
+    --wait=true --timeout="$DELETE_TIMEOUT" >/dev/null 2>&1
 
 hr 'end-to-end: sync a known-good public repo'
 kubectl apply -f "$MANIFEST" || exit 1
@@ -210,78 +253,73 @@ if ! $K wait --for=jsonpath='{.status.health.status}'=Healthy \
 fi
 
 if [[ $sync_ok -eq 0 ]]; then
-    hr 'debug: application'
-    $K get "application/$APP" -o wide
-    $K get "application/$APP" \
-        -o jsonpath='{.status.conditions}{"\n"}{.status.operationState.message}{"\n"}'
-
-    hr 'debug: resource tree'
-    $K get "application/$APP" \
-        -o jsonpath='{range .status.resources[*]}{.kind}/{.name} {.status} {.health.status}{"\n"}{end}'
-
-    hr 'debug: repo-server'
-    $K logs "deploy/$RELEASE-repo-server" --tail=40
-
-    hr 'debug: application-controller'
-    $K logs "sts/$RELEASE-application-controller" --tail=40
+    debug_application
 else
     ok 'Synced and Healthy'
 fi
 
 hr "resources actually exist in $APP_NS"
-$K_APP get all 2>/dev/null
-if $K_APP rollout status deploy/guestbook-ui --timeout="$GUESTBOOK_UI_TIMEOUT"; then
-    ok 'guestbook-ui rolled out'
+if [[ $sync_ok -eq 1 ]]; then
+    $K_APP get all 2>/dev/null
+    if $K_APP rollout status deploy/guestbook-ui --timeout="$GUESTBOOK_UI_TIMEOUT"; then
+        ok 'guestbook-ui rolled out'
+    else
+        fail 'guestbook-ui did not become available'
+        $K_APP describe deploy/guestbook-ui | tail -20
+    fi
 else
-    fail 'guestbook-ui did not become available'
-    $K_APP describe deploy/guestbook-ui | tail -20
+    echo 'skipping since application never synced'
 fi
 
 hr 'resources are tracked by argocd'
-tracked=$(
-    $K_APP get deploy guestbook-ui \
-        -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/tracking-id}' \
-    2>/dev/null
-)
-if [[ -n "$tracked" ]]; then
-    ok "tracking-id: $tracked"
+if [[ $sync_ok -eq 1 ]]; then
+    tracked=$(
+        $K_APP get deploy guestbook-ui \
+            -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/tracking-id}' \
+        2>/dev/null
+    )
+    if [[ -n "$tracked" ]]; then
+        ok "tracking-id: $tracked"
+    else
+        fail 'no argocd tracking annotation. resourceTrackingMethod may be misconfigured'
+    fi
 else
-    fail 'no argocd tracking annotation. resourceTrackingMethod may be misconfigured'
+    echo 'skipping since application never synced'
 fi
 
 hr 'self-heal'
-$K_APP scale deploy/guestbook-ui --replicas=3 >/dev/null
-healed=0
-for _ in {1..30}; do
-    want=$(
-        $K_APP get deploy guestbook-ui -o jsonpath='{.spec.replicas}' 2>/dev/null
-    )
-    [[ "$want" == '1' ]] && { healed=1; break; }
-    sleep 3;
-done
+if [[ $sync_ok -eq 1 ]]; then
+    $K_APP scale deploy/guestbook-ui --replicas=3 >/dev/null
+    healed=0
+    for _ in {1..30}; do
+        want=$(
+            $K_APP get deploy guestbook-ui -o jsonpath='{.spec.replicas}' 2>/dev/null
+        )
+        [[ "$want" == '1' ]] && { healed=1; break; }
+        sleep 3
+    done
 
-if [[ $healed -eq 1 ]]; then
-    ok 'controller reverted the out-of-band change'
+    if [[ $healed -eq 1 ]]; then
+        ok 'controller reverted the out-of-band change'
+    else
+        fail "replicas still '${want:-<none>}' after 90s. selfHeal is not working"
+    fi
 else
-    fail "replicas still '${want:-<none>}' after 90s. selfHeal is not working"
+    echo 'skipping since application never synced'
 fi
 
 hr 'prune on delete'
-kubectl delete -f "$MANIFEST" --wait=true --timeout="$DELETE_TIMEOUT"
-pruned=0
-for _ in {1..30}; do
-    if ! $K_APP get deploy guestbook-ui >/dev/null 2>&1; then
-        pruned=1
-        break
+if kubectl delete -f "$MANIFEST" --wait=true --timeout="$DELETE_TIMEOUT"; then
+    if $K_APP get deploy guestbook-ui >/dev/null 2>&1; then
+        fail 'finalizer released but guestbook-ui still exists'
+    else
+        ok 'guestbook-ui pruned'
     fi
-
-    sleep 2
-done
-
-if [[ $pruned -eq 1 ]]; then
-    ok 'guestbook-ui pruned'
 else
-    fail 'guestbook-ui survived Application deletion'
+    fail "argo did not prune within $DELETE_TIMEOUT"
+
+    debug_application
+    remove_finalizers --wait=false
 fi
 
 hr 'result'

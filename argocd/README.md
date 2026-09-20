@@ -22,22 +22,22 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 ## Deploy Key
 
 Create an SSH key for accessing the repository. This is optional for now since
-the repository on Github is public but it will be necessary once we have Gitea
-up and running.
+the repository on Github is public.
 
 ```bash
-ssh-keygen -t ed25519 -N ' ' -C argocd -f ~/.ssh/argocd_repo
+ssh-keygen -t ed25519 -N '' -C argocd -f ~/.ssh/argocd_repo
 cat ~/.ssh/argocd_repo.pub
 ```
 
 Add the key as read-only on Github and re-run `apply.sh`.
 
-Github allows a unique key per repository so it is required to create multiple
-keys for multiple repositories with the above method.
+Github allows each key to be registered once across all of Github so it is
+required to create multiple keys for multiple repositories with the above
+method.
 
 ## CLI
 
-nginx terminates TLS and proxies HTTPS/1.1 so raw gRPC does not pass. CLI needs
+nginx terminates TLS and proxies HTTP/1.1 so raw gRPC does not pass. CLI needs
 gRPC-Web:
 
 ```bash
@@ -48,7 +48,7 @@ argocd app list --grpc-web
 This can be set once with:
 
 ```bash
-argocd login argo.umtdg.com admin --grpc-web
+argocd login argo.umtdg.com --username admin --grpc-web
 echo 'grpc-web: true' >> ~/.config/argocd/config
 ```
 
@@ -63,7 +63,3 @@ resources that Helm already labelled. Changing it later forces a re-adoption of
 everything.
 - Since there is only one user (me) and no Slack targets, Dex and the
 notifications controller are disabled.
-
-## TODO
-
-- [ ] `TODO(umtdg)`: Update wording on this document after migrating to Gitea
