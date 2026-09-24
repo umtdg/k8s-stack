@@ -17,4 +17,5 @@ controller:
   metrics:
     enabled: false
 
-tcp: {}
+tcp:
+  22: "gitea/gitea-ssh:22"

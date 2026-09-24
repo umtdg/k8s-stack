@@ -1,0 +1,112 @@
+strategy:
+  type: Recreate
+
+image:
+  rootless: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+persistence:
+  enabled: true
+  create: true
+  claimName: gitea-shared-storage
+  storageClass: local-path
+  size: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  annotations:
+    helm.sh/resource-policy: keep
+
+service:
+  http:
+    type: ClusterIP
+    port: 3000
+  ssh:
+    type: ClusterIP
+    port: 22
+    clusterIP: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: 512m
+  tls: []
+  hosts:
+    - host: git.umtdg.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+gitea:
+  admin:
+    existingSecret: gitea-admin
+    email: me@umtdg.com
+    passwordMode: initialOnlyRequireReset
+
+  additionalConfigFromEnvs:
+    - name: GITEA__DATABASE__USER
+      valueFrom:
+        secretKeyRef:
+          name: gitea-db-creds
+          key: username
+    - name: GITEA__DATABASE__PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: gitea-db-creds
+          key: password
+
+  config:
+    APP_NAME: git.umtdg.com
+
+    database:
+      DB_TYPE: postgres
+      HOST: pg-rw.cnpg.svc.cluster.local:5432
+      NAME: gitea
+      SSL_MODE: require
+
+    server:
+      DOMAIN: git.umtdg.com
+      ROOT_URL: https://git.umtdg.com/
+      SSH_DOMAIN: git.umtdg.com
+      SSH_PORT: "22"
+      SSH_LISTEN_PORT: "2222"
+      LFS_START_SERVER: true
+
+    service:
+      DISABLE_REGISTRATION: true
+      REQUIRE_SIGNIN_VIEW: true
+
+    repository:
+      DEFAULT_PRIVATE: private
+      DEFAULT_BRANCH: main
+
+    session:
+      PROVIDER: db
+
+    actions:
+      ENABLED: true
+
+redis-cluster:
+  enabled: false
+
+postgresql:
+  enabled: false
+
+postgresql-ha:
+  enabled: false
+
+valkey:
+  enabled: false
+
+valkey-cluster:
+  enabled: false
+
+test:
+  enabled: false
