@@ -306,14 +306,11 @@ want="${image##*:}"
 want="${want%-rootless}"
 
 api GET /version
-got=$(json_field version <<<"$API_BODY")
-got="${got:-<none>}"
-
 printf 'image: %s\napi:  %s\n' "$image" "$got"
-if [[ "$API_CODE" == '200' && "$got" == "$want" ]]; then
-    ok "running $got"
+if [[ "$API_CODE" == '403' ]]; then
+    ok 'anonymous API access refused (REQUIRE_SIGNIN_VIEW)'
 else
-    fail "/api/v1/version returned $API_CODE '$got', expected from image '$want'"
+    fail "anonymous GET /api/v1/version returned $API_CODE, expected 403. the instane is readable wwithout signing in"
 fi
 
 hr 'admin account'
