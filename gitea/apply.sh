@@ -67,7 +67,7 @@ db_password=$(
     $K_PG get "secret/$DB_SECRET" -o jsonpath='{.data.password}' | base64 -d
 )
 
-$K create secert generic "$DB_SECRET" \
+$K create secret generic "$DB_SECRET" \
     --type=kubernetes.io/basic-auth \
     --from-literal=username="$db_user" \
     --from-literal=password="$db_password" \
