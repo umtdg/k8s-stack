@@ -27,7 +27,7 @@ spec:
         - name: PGDATABASE
           value: gitea
         - name: PGSSLMODE
-          value: required
+          value: require
         - name: PGUSER
           valueFrom:
             secretKeyRef:
