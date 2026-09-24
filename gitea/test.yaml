@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: gitea-ngprobe
+  name: gitea-pgprobe
   namespace: gitea
   labels:
-    app.kubernetes.io/name: gitea-probe
+    app.kubernetes.io/name: gitea-pgprobe
 spec:
   restartPolicy: Never
   terminationGracePeriodSeconds: 0
