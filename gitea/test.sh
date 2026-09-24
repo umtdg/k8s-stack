@@ -306,7 +306,7 @@ want="${image##*:}"
 want="${want%-rootless}"
 
 api GET /version
-printf 'image: %s\napi:  %s\n' "$image" "$got"
+printf 'image: %s\n' "$image"
 if [[ "$API_CODE" == '403' ]]; then
     ok 'anonymous API access refused (REQUIRE_SIGNIN_VIEW)'
 else
