@@ -56,7 +56,7 @@ gitea:
         secretKeyRef:
           name: gitea-db-creds
           key: username
-    - name: GITEA__DATABASE__PASSWORD
+    - name: GITEA__DATABASE__PASSWD
       valueFrom:
         secretKeyRef:
           name: gitea-db-creds
