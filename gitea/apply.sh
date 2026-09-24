@@ -81,7 +81,7 @@ if $K get "secrets/$ADMIN_SECRET" >/dev/null 2>&1; then
 else
     $K create secret generic "$ADMIN_SECRET" \
         --from-literal=username="$ADMIN_USER" \
-        --from-literal=passwoy="$(openssl rand -hex 48)"
+        --from-literal=password="$(openssl rand -hex 48)"
 fi
 
 hr "install $CHART_NAME $CHART_VERSION"
