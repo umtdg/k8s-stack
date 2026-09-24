@@ -71,7 +71,7 @@ $K create secret generic "$DB_SECRET" \
     --type=kubernetes.io/basic-auth \
     --from-literal=username="$db_user" \
     --from-literal=password="$db_password" \
-    --dry-run-client -o yaml | $K apply -f -
+    --dry-run=client -o yaml | $K apply -f -
 
 unset db_password
 
