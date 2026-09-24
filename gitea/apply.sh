@@ -3,7 +3,7 @@
 set -euo pipefail
 
 CHART_NAME='gitea'
-CHART_REPO='https://gl.gitea.com/charts'
+CHART_REPO='https://dl.gitea.com/charts'
 REPO_ALIAS='gitea-charts'
 RELEASE="${RELEASE:-gitea}"
 CHART_VERSION="${CHART_VERSION:-12.7.0}"
