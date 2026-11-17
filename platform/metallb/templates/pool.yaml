@@ -1,0 +1,26 @@
+{{- $name := required "pool.name is required" .Values.pool.name }}
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  addresses:
+    {{- toYaml (required "pool.addresses is required" .Values.pool.addresses) | nindent 4 }}
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  ipAddressPools:
+    - {{ $name }}
+  {{- with .Values.pool.interfaces }}
+  interfaces:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}

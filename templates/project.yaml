@@ -1,0 +1,51 @@
+{{- include "homelab.validate" . }}
+
+{{- $repos := list .Values.repo.url }}
+{{- range $name, $_ := .Values.services }}
+{{- $svc := include "homelab.service" (list $ $name) | fromYaml }}
+{{- with $svc.git }}
+{{- $repos = append $repos .repo }}
+{{- end }}
+{{- range (include "homelab.chart" (list $ $name) | fromYaml).dependencies }}
+{{- $repos = append $repos .repository }}
+{{- end }}
+{{- end }}
+{{- $secrets := list .Values.ingress.wildcardSecret }}
+{{- range .Values.secrets }}
+{{- $secrets = append $secrets .name }}
+{{- end }}
+{{- range .Values.postgres.databases }}
+{{- $secrets = concat $secrets (list .secret .consumer.secret) }}
+{{- end }}
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ .Values.argoDefaults.project }}
+  namespace: {{ include "homelab.argocd.namespace" . }}
+  annotations:
+    {{- /* before everything */}}
+    argocd.argoproj.io/sync-wave: "-100"
+spec:
+  description: homelab infrastructure and applications
+  sourceRepos:
+    {{- range $repos | uniq | sortAlpha }}
+    - {{ . }}
+    {{- end }}
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  orphanedResources:
+    warn: true
+    ignore:
+      {{- range $secrets | uniq | sortAlpha }}
+      - kind: Secret
+        name: {{ . }}
+      {{- end }}
+      - kind: ConfigMap
+        name: kube-root-ca.crt

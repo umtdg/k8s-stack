@@ -1,0 +1,73 @@
+{{- include "homelab.validate" . }}
+{{- $argocdNamespace := include "homelab.argocd.namespace" . }}
+{{- range $name, $_ := .Values.services }}
+{{- $svc := include "homelab.service" (list $ $name) | fromYaml }}
+{{- if or $svc.argo.managed ($.Values.render | default dict).all }}
+{{- $values := include "homelab.serviceValues" (list $ $name) }}
+{{- $syncOptions := $svc.argo.syncOptions | default list }}
+{{- if $svc.createNamespace }}
+{{- $syncOptions = append $syncOptions "CreateNamespace=true" }}
+{{- end }}
+{{- if $svc.skipDryRunOnMissingResource }}
+{{- $syncOptions = append $syncOptions "SkipDryRunOnMissingResource=true" }}
+{{- end }}
+{{- if $svc.argo.ignoreDifferences }}
+{{- $syncOptions = append $syncOptions "RespectIgnoreDifferences=true" }}
+{{- end }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ $name }}
+  namespace: {{ $argocdNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ $svc.wave | int | quote }}
+    {{- with $svc.argo.migrateFrom }}
+    argocd.argoproj.io/client-side-apply-migration-manager: {{ . }}
+    {{- end }}
+spec:
+  project: {{ $svc.argo.project }}
+  source:
+    {{- if $svc.git }}
+    repoURL: {{ $svc.git.repo }}
+    path: {{ $svc.git.path }}
+    targetRevision: {{ $svc.git.ref | quote }}
+    {{- else }}
+    repoURL: {{ $.Values.repo.url }}
+    path: {{ $svc.dir }}
+    targetRevision: {{ $.Values.repo.revision | quote }}
+    {{- end }}
+    helm:
+      releaseName: {{ $svc.releaseName }}
+      {{- with $values }}
+      valuesObject:
+        {{- . | nindent 8 }}
+      {{- end }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $svc.namespace }}
+  syncPolicy:
+    {{- if $svc.argo.automated }}
+    automated:
+      prune: {{ $svc.argo.prune }}
+      selfHeal: {{ $svc.argo.selfHeal }}
+    {{- end }}
+    {{- with $syncOptions }}
+    syncOptions:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- if and $svc.createNamespace $svc.namespaceLabels }}
+    managedNamespaceMetadata:
+      labels:
+        {{- toYaml $svc.namespaceLabels | nindent 8 }}
+    {{- end }}
+    {{- with $svc.argo.retry }}
+    retry:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- with $svc.argo.ignoreDifferences }}
+  ignoreDifferences:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: pfo
+description: >-
+  The portfolio application and its public ingress
+type: application
+version: 0.1.0

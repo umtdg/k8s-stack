@@ -1,0 +1,29 @@
+{{- $database := include "homelab.databaseFor" (list . .service.name) | fromYaml }}
+
+replicas: 1
+
+image:
+  repository: umtdg/pfo
+  tag: latest
+  pullPolicy: Always
+
+port: 8080
+
+config:
+  SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+
+database:
+  url: jdbc:postgresql://{{ include "homelab.postgres.address" . }}/{{ $database.name }}
+  credentials:
+    secret: {{ $database.consumer.secret }}
+    usernameKey: username
+    passwordKey: password
+  {{- with .service.legacyEnvFromSecret }}
+  legacyEnvFromSecret: {{ . }}
+  {{- end }}
+
+ingress:
+  host: {{ include "homelab.host" (list . .service.name) }}
+  className: {{ .Values.ingress.className }}
+  annotations:
+    {{- include "homelab.ingress.annotations" . | nindent 4 }}

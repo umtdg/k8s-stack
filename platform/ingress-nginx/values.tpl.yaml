@@ -1,0 +1,33 @@
+{{- $gitea := include "homelab.service" (list . "gitea") | fromYaml }}
+wildcard:
+  name: wildcard
+  secretName: {{ .Values.ingress.wildcardSecret }}
+  issuer: {{ .Values.tls.issuer.prod }}
+  dnsNames:
+    - {{ .Values.domain }}
+    - {{ printf "*.%s" .Values.domain | quote }}
+
+ingress-nginx:
+  controller:
+    service:
+      annotations:
+        metallb.io/loadBalancerIPs: {{ .Values.network.ingressVIP }}
+
+    ingressClass: {{ .Values.ingress.className }}
+    ingressClassResource:
+      name: {{ .Values.ingress.className }}
+      default: true
+
+    extraArgs:
+      default-ssl-certificate: {{ .service.namespace }}/{{ .Values.ingress.wildcardSecret }}
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+    metrics:
+      enabled: false
+
+  tcp:
+    {{ $gitea.ssh.port | quote }}: {{ printf "%s/%s-ssh:%v" $gitea.namespace $gitea.releaseName $gitea.ssh.port | quote }}

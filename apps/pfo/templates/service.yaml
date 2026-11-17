@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pfo.selector" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "pfo.selector" . | nindent 4 }}
+  ports:
+    - protocol: TCP
+      port: {{ required "port is required" .Values.port }}
+      targetPort: {{ .Values.port }}

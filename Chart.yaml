@@ -1,0 +1,7 @@
+apiVersion: v2
+name: homelab
+description: >-
+  App of Apps. Renders the AppProject and one Argo CD application per
+  component from the root values.yaml, and validates that file.
+type: application
+version: 0.1.0

@@ -1,0 +1,21 @@
+{{- range .Values.issuers }}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ required "issuers[].name is required" .name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  acme:
+    server: {{ required "issuers[].server is required" .server }}
+    email: {{ required "email is required" $.Values.email }}
+    privateKeySecretRef:
+      name: {{ required "issuers[].accountKeySecret is required" .accountKeySecret }}
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: {{ required "cloudflare.secret is required" $.Values.cloudflare.secret }}
+              key: {{ required "cloudflare.key is required" $.Values.cloudflare.key }}
+{{- end }}

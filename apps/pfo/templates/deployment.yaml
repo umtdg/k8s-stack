@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pfo.selector" . | nindent 4 }}
+spec:
+  replicas: {{ required "replicas is required" .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "pfo.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pfo.selector" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include "pfo.config" . | sha256sum }}
+    spec:
+      containers:
+        - name: {{ .Release.Name }}
+          {{- $repo := required "image.repository is required" .Values.image.repository }}
+          {{- $tag := required "image.tag is required" .Values.image.tag }}
+          image: {{ printf "%s:%v" $repo $tag | quote }}
+          imagePullPolicy: {{ required "image.pullPolicy is required" .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ required "port is required" .Values.port }}
+          {{- if not .Values.database.legacyEnvFromSecret }}
+          env:
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "database.credentials.secret is required" .Values.database.credentials.secret }}
+                  key: {{ required "database.credentials.usernameKey is required" .Values.database.credentials.usernameKey }}
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.credentials.secret }}
+                  key: {{ required "database.credentials.passwordKey is required" .Values.database.credentials.passwordKey }}
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            {{- with .Values.database.legacyEnvFromSecret }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}

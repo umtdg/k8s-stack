@@ -1,0 +1,15 @@
+{{- range .Values.databases }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: {{ .name | replace "_" "-" }}
+  namespace: {{ $.Release.Namespace }}
+  {{- include "postgres.protect" $ | nindent 2 }}
+spec:
+  cluster:
+    name: {{ $.Values.cluster.name }}
+  name: {{ .name }}
+  owner: {{ .name }}
+  databaseReclaimPolicy: retain
+{{- end }}

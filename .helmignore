@@ -1,0 +1,14 @@
+.git/
+.gitignore
+
+# upstream charts
+charts/
+*.tgz
+
+*.sh
+*.md
+Makefile
+tests/
+bin/
+lib/
+bootstrap/

@@ -11,7 +11,7 @@ NS="${NS:-gitea}"
 HOST="${HOST:-git.umtdg.com}"
 VIP="${VIP:-10.10.10.200}"
 SPEC="${SPEC:-spec.yaml}"
-VALUES="${VALUES:-values.yaml}"
+VALUES="${VALUES:-legacy-values.yaml}"
 TIMEOUT="${TIMEOUT:-10m}"
 
 PG_NS="${PG_NS:-cnpg}"

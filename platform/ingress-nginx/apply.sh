@@ -15,7 +15,7 @@ helm repo update "$CHART_NAME" >/dev/null
 helm upgrade --install "$CHART_NAME" "$CHART_NAME"/"$CHART_NAME" \
     --namespace "$NS" --create-namespace \
     --version "$CHART_VERSION" \
-    -f "values.yaml" \
+    -f "legacy-values.yaml" \
     --wait --timeout $TIMEOUT
 
 declare ingress_vip

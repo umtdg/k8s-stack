@@ -10,7 +10,7 @@ NS="${NS:-argocd}"
 HOST="${HOST:-argo.umtdg.com}"
 VIP="${VIP:-10.10.10.200}"
 SPEC="${SPEC:-spec.yaml}"
-VALUES="${VALUES:-values.yaml}"
+VALUES="${VALUES:-legacy-values.yaml}"
 TIMEOUT="${TIMEOUT:-5m}"
 
 REPO_URL="${REPO_URL:-git@github.com:umtdg/k8s-stack.git}"

@@ -1,0 +1,14 @@
+{{- with .Values.wildcard }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  secretName: {{ required "wildcard.secretName is required" .secretName }}
+  issuerRef:
+    name: {{ required "wildcard.issuer is required" .issuer }}
+    kind: ClusterIssuer
+  dnsNames:
+    {{- toYaml (required "wildcard.dnsNames is required" .dnsNames) | nindent 4 }}
+{{- end }}

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: metallb
+description: >-
+  MetalLB in layer 2 mode, with the address pool it hands out.
+type: application
+version: 0.1.0
+dependencies:
+  - name: metallb
+    version: 0.16.1
+    repository: https://metallb.github.io/metallb

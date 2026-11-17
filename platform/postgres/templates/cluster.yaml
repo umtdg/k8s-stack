@@ -1,0 +1,40 @@
+{{- with .Values.cluster }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ required "cluster.name is required" .name }}
+  namespace: {{ $.Release.Namespace }}
+  {{- include "postgres.protect" $ | nindent 2 }}
+spec:
+  instances: {{ .instances }}
+  imageName: {{ required "cluster.imageName is required" .imageName }}
+  storage:
+    size: {{ required "cluster.storage.size is required" .storage.size }}
+    storageClass: {{ required "cluster.storage.storageClass is required" .storage.storageClass }}
+  {{- with .resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .parameters }}
+  postgresql:
+    parameters:
+      {{- range $key, $value := . }}
+      {{ $key }}: {{ $value | toString | quote }}
+      {{- end }}
+  {{- end }}
+  bootstrap:
+    initdb:
+      database: {{ .initdb.database }}
+      owner: {{ .initdb.owner }}
+  {{- with $.Values.databases }}
+  managed:
+    roles:
+      {{- range . }}
+      - name: {{ required "databases[].name is required" .name }}
+        ensure: present
+        login: true
+        passwordSecret:
+          name: {{ required "databases[].secret is required" .secret }}
+      {{- end }}
+  {{- end }}
+{{- end }}
