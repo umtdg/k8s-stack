@@ -62,7 +62,6 @@ secrets:
 
 argoDefaults:
   project: homelab
-  managed: false
   automated: true
   prune: true
   selfHeal: true
@@ -70,6 +69,7 @@ argoDefaults:
     - ServerSideApply=true
   retry:
     limit: 5
+    refresh: true
     backoff:
       duration: 10s
       factor: 2

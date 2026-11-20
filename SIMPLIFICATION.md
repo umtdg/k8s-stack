@@ -1,374 +1,622 @@
-# Simplification plan
+# Simplify the repository
 
-The deployment should be readable file by file: what a file says is what
-reaches the cluster. Today a value passes through two template engines before
-it gets there, and most of the mistakes found in review sat between those
-layers.
+This guide changes how `values.yaml` becomes Argo CD Applications. Do it once,
+before you switch the cluster with `MIGRATION.md`. It does not touch the
+cluster.
 
-The rule this plan follows: **Helm only where an upstream chart is pulled in;
-plain YAML everywhere else. A value is written where it is used.**
+Follow the steps in order. Each step ends with a check. All eight steps were
+tried on a copy of the repository and pass their checks. The cluster commands
+and the CI workflow were not tried.
 
-Where things stand:
+## What you get
 
-- 505 template actions and 22 helpers across the root chart, the
-  `values.tpl.yaml` files and the service templates.
-- About 1,200 lines exist only to generate, validate and test the generation:
-  `templates/`, `values.yaml`, `values.schema.json`, `tests/validate_test.sh`,
-  `tests/style_test.sh` and the README's conventions.
-- One typo in any service's values file stops `root` from rendering every
-  Application.
+Today, Argo CD runs our Helm templates every time it syncs `root`. One mistake
+in a template stops every service from updating. And you only see the real
+values if you render them yourself.
 
-## Summary
+After this guide:
 
-Ordered by how much each change reduces what can go wrong unnoticed.
+- `make generate` writes one plain YAML file per Application into
+  `generated/`.
+- You commit `generated/` together with your change. Argo CD deploys those
+  files as they are.
+- `values.yaml` is still the only place for shared values, such as the domain.
 
-| # | Change | Removes | Gives up | Breaks on the cluster | Recommendation |
-|---|---|---|---|---|---|
-| 1 | Plain `values.yaml` per chart | the `tpl` layer; 368 lines of values become plain YAML | one place per shared value | nothing | do |
-| 2 | Plain Application manifests | the root chart: helpers, catalog, schema, validation | `managed`, `argoDefaults`, catalog checks | `root` changes source | do |
-| 3 | Own templates as plain YAML | `required`, helpers, the pfo and postgres charts | a few error messages | pfo rolls once | do |
-| 4 | Drop `homelab-config` | 67 lines, `make config` | nothing in use | nothing | do |
-| 5 | Tests and tooling | 256 lines of tests, 4 make targets | negative tests, style checks | nothing | do |
-| 6 | README | about 100 lines | nothing | nothing | do |
-| 7 | After the switch | migration-only settings | nothing | pfo rolls once | do after the switch |
+So a template mistake fails on your machine, not in the cluster. And every
+commit shows exactly what will change in the cluster.
 
-Items 1 to 6 land before the switch, so the cluster is switched once, onto the
-final layout. Each item leaves `make test` passing.
+These decisions are already made:
 
-## What stays
+- Shared values live only in `values.yaml`.
+- `values.schema.json` is the only check on `values.yaml`.
+- Secrets are still created by hand.
+- pfo runs a fixed image version. No Renovate.
 
-- Wrapper charts with the upstream chart as a pinned dependency, and
-  `Chart.lock`. Argo CD builds the dependencies itself.
-- Sync waves that wait for the Applications before them to be healthy, with
-  the Application health check in Argo CD's values.
-- Every sync setting in use today: server-side apply, retry, `prune: false`
-  for services that ship CRDs, `selfHeal: false` for Argo CD,
-  `SkipDryRunOnMissingResource` for metallb and cert-manager, the PSA labels
-  on `metallb-system`.
-- `root` managing itself; the `homelab` AppProject with orphan warnings.
-- An offline `make test` that renders every chart.
-- Secrets created by hand, never in git.
-- The per-service `test.sh` smoke tests. They test the cluster, not the
-  repository.
+When you are done, the repository looks like this:
 
-## Ease of deployment, before and after
-
-| Task | Today | After |
-|---|---|---|
-| Bootstrap | render Argo CD's values from the root chart, `helm upgrade`, render `root`, `kubectl apply` | `helm upgrade --install argocd platform/argocd`, `kubectl apply -f root/root.yaml` |
-| Add a service | directory, `Chart.yaml`, `values.tpl.yaml`, catalog entry (and schema if it has new keys) | directory, `Chart.yaml`, `values.yaml`, `root/<name>.yaml` copied from a neighbour |
-| See what a service gets | `helm template … \| yq … valuesObject` | open its `values.yaml` |
-| Stop managing a service | `managed: false` | delete `root/<name>.yaml` |
-| Add a database | one list entry | a role, a `Database` object and the consumer's values: 3 places, 2 directories |
-| Change the domain | 1 line | 11 lines in 5 files, found with `grep -rln umtdg.com` |
-| Upgrade a chart | version in `Chart.yaml`, `make deps` | same |
-
-The last rows are the cost. Shared values have not changed since the cluster
-was built.
-
-## 1. Plain `values.yaml` per chart
-
-**Today.** The root chart reads each `values.tpl.yaml` as a string, renders it
-with `tpl` against a hand-built scope, parses the result and writes it into the
-Application's `valuesObject`. Argo CD then renders the service chart, which
-passes the values to the upstream chart.
-
-**Change.** Each `values.tpl.yaml` becomes a `values.yaml` with every
-expression replaced by its value. Helm and Argo CD load a chart's `values.yaml`
-by themselves, so the Applications no longer need `valuesObject`. The one
-exception is local-path (see item 2).
-
-**Why first.** Every rendering bug found in review was in this layer: undefined
-`$ssh` and `$host`, the leftover `hl.component`, databases not forwarded to the
-postgres chart, and an annotation duplicated by a one-line helper. A failing
-`tpl` prints the whole values file as one escaped string.
-
-**Gives up** one place per shared value. Counted on today's rendered values:
-
-| Value | Files | Lines |
-|---|---|---|
-| domain | argocd, cert-manager, gitea, ingress-nginx, pfo | 11 |
-| ingress class | argocd, gitea, ingress-nginx, pfo | 5 |
-| storage class | gitea, local-path, postgres | 3 |
-| issuer names | cert-manager, ingress-nginx | 3 |
-| gitea SSH port | gitea, ingress-nginx | 3 |
-| database secret | gitea, postgres | 3 |
-| ingress VIP | ingress-nginx, metallb | 2 |
-| Postgres host | gitea, pfo | 2 |
-| owner e-mail | cert-manager, gitea | 2 |
-
-**Breaking changes.** None on the cluster if every chart renders the same as
-before (see [Verification](#verification)). In the repository, the
-`homelab.*` helpers can no longer be used in values, and the README's rules for
-values files go.
-
-**How.** Write each Application's current values into its chart, using the
-snapshot from [Verification](#verification), then copy the comments back by
-hand from `values.tpl.yaml`, because yq does not carry them:
-
-```bash
-yq 'select(.metadata.name == "gitea") | .spec.source.helm.valuesObject' \
-    /tmp/before/applications.yaml > apps/gitea/values.yaml
+```
+values.yaml           shared values and the list of services
+values.schema.json    what each value must look like
+templates/            turns values.yaml into Argo CD Applications
+generated/            those Applications, written by make generate
+platform/<service>/   a chart: Chart.yaml, Chart.lock, values.tpl.yaml, templates/
+apps/<service>/       the same
+tests/charts_test.sh
+.github/workflows/    runs the tests on every push
+Makefile              generate, test, deps, test-charts, bootstrap
 ```
 
-## 2. Plain Application manifests; the root chart goes
+## Before you start
 
-**Today.** `values.yaml` holds a catalog. `homelab.service` merges
-`argoDefaults` into each entry, `applications.yaml` loops over the result,
-`project.yaml` works out its source repositories and orphan exceptions, and
-`_validate.tpl` with `values.schema.json` checks the catalog. `root` renders
-all of it as a Helm chart.
+Install helm 3.19 and yq 4.54 (mikefarah). Use exactly these versions:
+`make test` compares files byte for byte, and other versions format YAML a
+little differently.
 
-**Change.** Each Application is written out in its own file, in a directory
-that `root` syncs as plain YAML (a directory source, no Helm). `root.yaml` and
-`project.yaml` sit next to them. A file is what `make render` prints today,
-about 33 lines:
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: gitea
-  namespace: argocd
-  annotations:
-    argocd.argoproj.io/sync-wave: "0"
-spec:
-  project: homelab
-  source:
-    repoURL: git@github.com:umtdg/k8s-stack.git
-    path: apps/gitea
-    targetRevision: main
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: gitea
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - ServerSideApply=true
-      - CreateNamespace=true
-    retry:
-      limit: 5
-      backoff:
-        duration: 10s
-        factor: 2
-        maxDuration: 3m
-```
-
-`grep sync-wave root/*.yaml` shows the order.
-
-**Removes** `Chart.yaml`, `values.yaml`, `values.schema.json`, `.helmignore` and
-all of `templates/`: about 890 lines, and every helper. The new files add about
-400 lines with no template actions.
-
-**Gives up:**
-
-- **`managed`.** An Application exists when its file exists. Deleting the file
-  makes `root` prune the Application. It has no finalizer, so what it deployed
-  stays, the same as `managed: false` today.
-- **`argoDefaults`.** The sync policy is repeated in every file, about 12 lines
-  each. Argo CD has no project-wide sync defaults; the copies are explicit and
-  can be searched.
-- **`render.all` and `make render`.** The files are the rendering.
-- **Catalog checks** from the schema and `_validate.tpl`: VIP inside the pool,
-  node IP outside it, no hostname or directory twice, database names and
-  secrets unique, unknown keys. What is left: the VIP and the pool are two
-  lines in two files, ingress-nginx's admission webhook rejects a second
-  Ingress for the same host and path, and Argo CD reports a path that does not
-  exist. Pinned chart versions keep a one-line check (item 5).
-
-**Considered and not recommended:** a 30-line root chart that loops over a
-plain list, with no defaults, `tpl` or validation. It has fewer lines, but each
-Application still only exists after rendering, and one template error still
-blocks all of them.
-
-**Breaking changes:**
-
-- **`root` changes source** from a Helm chart at `.` to a directory. Before
-  the switch nothing live changes. After the switch, `root` syncs itself onto
-  the new source; the child Applications stay the same as long as the files
-  match today's rendered output.
-- **Bootstrap changes.** `MIGRATION.md` step 3 becomes
-  `helm upgrade --install argocd platform/argocd -n argocd --create-namespace`.
-  Step 5 becomes `kubectl apply -f root/root.yaml`, and the `managed` flip goes
-  away.
-- **local-path stays the exception.** Its chart is only published in git, so
-  it cannot be a dependency of a wrapper chart, and its 15 lines of values stay
-  inline as `helm.valuesObject` in `root/local-path.yaml`.
-
-**How.** Generate the files once from today's output, then fix up local-path,
-`root.yaml` and `project.yaml` by hand:
+Download the upstream charts:
 
 ```bash
-mkdir root
-helm template homelab . --set render.all=true -s templates/applications.yaml \
-    | yq -s '"root/" + .metadata.name' \
-        'with(select(.metadata.name != "local-path"); del(.spec.source.helm.valuesObject)) | ... head_comment=""'
-# yq names the files .yml; rename them to .yaml
+make deps
 ```
 
-## 3. Own templates as plain YAML
-
-**Today.** The MetalLB pool, the ClusterIssuers, the wildcard certificate, the
-Postgres cluster and the pfo chart read their values through `required`,
-`range`, `with` and helpers (`postgres.protect`, `pfo.config`,
-`pfo.selector`).
-
-**Change.** Each of these values is used once, so the values layer adds
-nothing. Write the objects out:
-
-- **`platform/metallb/templates/pool.yaml`,
-  `platform/cert-manager/templates/issuers.yaml`,
-  `platform/ingress-nginx/templates/wildcard.yaml`:** literal YAML. Helm passes
-  a file with no `{{` through unchanged. The upstream values stay in
-  `values.yaml` under the chart's name.
-- **`platform/postgres`:** no chart. Plain manifests for the Cluster and one
-  `Database` per database, synced as a directory.
-- **`apps/pfo`:** no chart. A Deployment, a Service and an Ingress. The
-  environment variables go inline in the Deployment instead of a ConfigMap, so
-  changing one rolls the pods by itself. Today the `checksum/config`
-  annotation does that.
-
-**Gives up:**
-
-- **`required` error messages.** These charts only ever get values from this
-  repository.
-- **The postgres `range`** that keeps the role list and the `Database` objects
-  in step. Adding a database means two blocks in one directory.
-- **pfo's `legacyEnvFromSecret` switch.** It becomes a line to edit, and goes
-  in item 7 anyway.
-
-**Breaking changes:**
-
-- **pfo:** ConfigMap `pfo-config` is pruned and the variables move into the
-  Deployment, which rolls the pods once.
-- **postgres and pfo:** their Applications change from a Helm source to a
-  directory source.
-- Nothing else changes if the output renders the same.
-
-## 4. Drop `homelab-config`
-
-Nothing reads the ConfigMap: no script, chart or README step uses its keys. It
-costs 67 lines of template, `make config`, and the README's rules for naming
-the keys. It goes with item 2 anyway; it is listed on its own in case item 2
-is not taken.
-
-**Breaking changes.** None before the switch. After it, `root` prunes the
-ConfigMap.
-
-## 5. Tests and tooling
-
-**Today:**
-
-- `tests/validate_test.sh` (186 lines) tests the validator and the schema.
-- `tests/style_test.sh` (70 lines) checks whitespace rules in the templates.
-- `tests/charts_test.sh` renders each chart with its `valuesObject`.
-- The Makefile has `validate`, `test`, `deps`, `test-charts`, `render` and
-  `config`.
-
-**Change:**
-
-- **Delete** `validate_test.sh` and `style_test.sh`. What they test is gone
-  after items 2 and 3.
-- **`charts_test.sh`** runs `helm template` on every directory that has a
-  `Chart.yaml`, and parses every plain manifest under `root/`,
-  `platform/postgres` and `apps/pfo` with yq.
-- **Version pins:** one line that fails on `^`, `~`, `*` or `x` in a
-  dependency version.
-- **Makefile:** `deps` and `test`.
-- **Optional:** run kubeconform with `-strict` on the rendered output. It
-  catches misspelled fields in manifests, but not in Helm values or
-  annotations. It needs the binary, and network access for the CRD schemas
-  (MetalLB, cert-manager, CloudNativePG, Argo CD).
-
-**Gives up** the negative tests and the style checks.
-
-No automated check catches a misspelled Helm values key (`volumeBindingNode`)
-or annotation key (`argocd.argproj.io`). After this plan they sit in short,
-plain files, which is where review catches them.
-
-**Breaking changes.** None.
-
-## 6. README
-
-Cut "Conventions" (82 lines) and "Where a value lives". Keep the layout, the
-bootstrap, adding a service, upgrading a chart, and these rules:
-
-- no finalizers on Applications;
-- `prune: false` for services that ship CRDs;
-- sync wave `"1"` for objects that need their operator running;
-- waves wait for health, which needs Argo CD's values;
-- namespaces are created by Argo CD;
-- secrets are never in git.
-
-The target is about 100 lines.
-
-## 7. After the switch
-
-- **Migration annotations:** remove the
-  `client-side-apply-migration-manager: helm` annotation from the argocd,
-  gitea and ingress-nginx Applications. It only matters for the first sync
-  that takes over from Helm.
-- **pfo's credentials:** create `default/pfo-db`, point the Deployment at it,
-  then delete `pfo-secret`. The pods roll once, and the secret has to exist
-  first.
-- **Legacy files:** delete them and `MIGRATION.md`; `MIGRATION.md` already
-  lists them.
-- **Keep** `fullnameOverride: cnpg-controller-manager`. Changing it would
-  rename the operator's Deployment again.
-
-## Verification
-
-Before starting, render every chart with the values its Application passes
-today:
+Save today's output, so you can compare after each step. Save this script as
+`/tmp/compare.sh`:
 
 ```bash
-mkdir -p /tmp/before
-helm template homelab . --set render.all=true -s templates/applications.yaml \
-    > /tmp/before/applications.yaml
-for app in $(yq -N 'select(.spec.source.path | test("^(platform|apps)/")) | .metadata.name' \
-        /tmp/before/applications.yaml); do
-    a=$(yq "select(.metadata.name == \"$app\")" /tmp/before/applications.yaml)
-    yq '.spec.source.helm.valuesObject // {}' <<<"$a" \
-        | helm template "$app" "$(yq .spec.source.path <<<"$a")" \
-            -n "$(yq .spec.destination.namespace <<<"$a")" -f - \
-        | yq -P 'sort_keys(..) | ... comments=""' > "/tmp/before/$app.yaml"
+#!/usr/bin/env bash
+# Usage: compare.sh before|after
+set -euo pipefail
+
+out=/tmp/$1
+rm -rf "$out" "$out-charts"
+mkdir -p "$out" "$out-charts"
+
+# The Applications.
+if [[ $1 == before ]]; then
+    helm template homelab . --set argoDefaults.managed=true \
+        | (cd "$out" && yq -s '.metadata.name + ".yaml"' 'sort_keys(..) | ... comments=""')
+else
+    for f in generated/*.yaml; do
+        yq 'sort_keys(..) | ... comments=""' "$f" > "$out/$(basename "$f")"
+    done
+fi
+
+# Every chart in this repository, with the values its Application passes.
+for f in "$out"/*.yaml; do
+    path=$(yq '.spec.source.path // ""' "$f")
+    case $path in platform/*|apps/*) ;; *) continue ;; esac
+    yq '.spec.source.helm.valuesObject // {}' "$f" \
+        | helm template "$(yq .metadata.name "$f")" "$path" \
+            -n "$(yq .spec.destination.namespace "$f")" -f - \
+        > "$out-charts/$(basename "$f")"
 done
 ```
 
-After each item, render the same way and `diff`. For directories that are now
-plain manifests, use `yq -P 'sort_keys(..) | ... comments=""' <dir>/*.yaml`.
+Run it once, now:
 
-The only expected differences are pfo in item 3 (the ConfigMap gone, the
-variables inline) and the `valuesObject` and `homelab-config` removals in the
-Applications.
-
-## Open decisions
-
-1. **Name of the Applications directory:** `root/`, `argocd/apps/` or
-   `clusters/homelab/`. This plan uses `root/`.
-2. **pfo:** plain manifests (recommended) or a minimal chart.
-3. **postgres:** written out (recommended) or a `range` over a list.
-4. **kubeconform** in `make test`: yes or no.
-
-## End state
-
-```
-root/                    one Application per service, plus root.yaml and project.yaml
-platform/<service>/      Chart.yaml, Chart.lock, values.yaml; templates/ only for extra objects
-platform/postgres/       Cluster and Database manifests
-apps/gitea/              Chart.yaml, Chart.lock, values.yaml
-apps/pfo/                Deployment, Service and Ingress manifests
-tests/charts_test.sh
-Makefile                 deps, test
-README.md
+```bash
+bash /tmp/compare.sh before
 ```
 
-## Out of scope
+After each step, run:
 
-- **ingress-nginx** has been unmaintained since March 2026: no releases and no
-  CVE fixes. Replacing it, for example with Gateway API, is a separate change.
-  It is easier after this plan, since every Ingress is then one plain block in
-  one file.
-- **Calico** stays outside Argo CD.
+```bash
+make generate
+make test
+bash /tmp/compare.sh after
+diff -r /tmp/before /tmp/after
+diff -r /tmp/before-charts /tmp/after-charts
+```
+
+Each step lists the differences to expect. Any other difference is a mistake.
+When the check passes, commit the step.
+
+## Step 1: Generate the Applications
+
+1. Add a `generate` target to the `Makefile`:
+
+   ```make
+   GENERATED ?= generated
+
+   generate:
+   	rm -rf $(GENERATED) && mkdir -p $(GENERATED)
+   	helm template homelab . | (cd $(GENERATED) && yq -s '.metadata.name + ".yaml"' \
+   	    '... head_comment="" | . head_comment="Generated by make generate. Edit values.yaml or templates/ instead."')
+   ```
+
+   yq runs inside the output folder because newer versions refuse to write
+   anywhere else.
+
+2. Add this line to the `test` target. It fails when `generated/` is out of
+   date:
+
+   ```make
+   	tmp=$$(mktemp -d) && $(MAKE) -s generate GENERATED=$$tmp && diff -r generated $$tmp
+   ```
+
+3. In `templates/root.yaml`, point `root` at `generated/`. Replace the
+   `source:` block with:
+
+   ```yaml
+     source:
+       repoURL: {{ .Values.repo.url }}
+       path: generated
+       targetRevision: {{ .Values.repo.revision | quote }}
+   ```
+
+4. Remove the `managed` setting. Every service now gets an Application.
+
+   - In `templates/applications.yaml`, delete the line
+     `{{- if or $svc.argo.managed ($.Values.render | default dict).all }}` and
+     the last `{{- end }}` in the file.
+   - In `values.yaml`, delete `managed: false` under `argoDefaults`.
+   - In `values.schema.json`, delete `managed` from the `argo` definition and
+     from the `argoDefaults` required list. Delete the `render` property.
+   - In the `Makefile` and `tests/charts_test.sh`, delete
+     `--set render.all=true`.
+
+5. Delete `tests/validate_test.sh` and its line in the `Makefile`. Many of its
+   tests use `managed`, and step 2 removes the rest of what it tests.
+
+6. Generate the files and add them to git:
+
+   ```bash
+   make generate
+   git add generated
+   ```
+
+**Expected differences:** only `root.yaml`. Its source is now the `generated`
+folder instead of the root chart.
+
+Good to know:
+
+- Never edit `generated/` by hand. Change `values.yaml`, `templates/`, a
+  `values.tpl.yaml` or a chart's dependency repository, then run
+  `make generate`.
+- On a merge conflict in `generated/`, run `make generate`. Don't fix the files
+  by hand.
+- If you forget `make generate`, `make test` fails. If you push anyway, Argo CD
+  deploys the old files. The cluster still matches git; your change is just not
+  live yet.
+- To stop Argo CD from syncing a service, set `argo.automated: false`. To remove
+  a service, delete its entry: Argo CD deletes its Application but keeps what
+  it deployed.
+- A new service with `automated: false` holds back the later sync waves until
+  you sync it by hand. Keep unfinished services on a branch.
+
+## Step 2: Make the schema strict
+
+The checks in `templates/_validate.tpl` go away. The schema catches typos
+instead.
+
+1. In `values.schema.json`, in the `service` definition:
+
+   - Add `"additionalProperties": false`, so a misspelled key fails.
+   - Add entries for the two keys only one service uses:
+
+     ```json
+     "ssh": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": ["port", "listenPort"],
+       "properties": {
+         "port": { "type": "integer" },
+         "listenPort": { "type": "integer" }
+       }
+     },
+     "legacyEnvFromSecret": { "$ref": "#/definitions/objectName" }
+     ```
+
+2. Forbid `homelab` as a service name. It is the AppProject's file name in
+   `generated/`. In `services.propertyNames`, replace
+   `{ "not": { "const": "root" } }` with:
+
+   ```json
+   { "not": { "enum": ["root", "homelab"] } }
+   ```
+
+3. Make `git.ref` a tag or a full commit hash:
+
+   ```json
+   "ref": {
+     "description": "A tag or a full commit hash.",
+     "type": "string",
+     "pattern": "^(v?[0-9]+\\.[0-9]+\\.[0-9]+[0-9A-Za-z.+-]*|[0-9a-f]{40})$"
+   }
+   ```
+
+4. Delete `templates/_validate.tpl`, and `homelab.ipToInt` in
+   `templates/_helpers.tpl`.
+
+5. Delete the line `{{- include "homelab.validate" . }}` at the top of each file
+   in `templates/`.
+
+6. Add this line to the `test` target. It fails if a chart dependency has no
+   exact version:
+
+   ```make
+   	! grep -h '^    version:' platform/*/Chart.yaml apps/*/Chart.yaml | grep -vE '^    version: v?[0-9]+\.[0-9]+\.[0-9]+$$'
+   ```
+
+**Expected differences:** none.
+
+A typo should now fail:
+
+```bash
+helm template homelab . --set services.metallb.skipDryRunOnMissingResources=true
+```
+
+What you give up are the checks that compare values with each other:
+
+- The node IP must be outside the MetalLB pool. Otherwise a Service can take
+  the node's address.
+- The ingress VIP must be inside the pool. Otherwise ingress gets no address.
+- No hostname, folder, database or secret is used twice.
+
+These values rarely change, and `generated/` shows the result of any change.
+
+## Step 3: Remove what nothing uses
+
+1. Delete `templates/config.yaml`. Nothing reads the `homelab-config` ConfigMap.
+
+2. Remove the `releaseName` setting. The release always has the service's name.
+
+   - In `templates/_helpers.tpl`, delete the `if not $service.releaseName` block.
+   - In `templates/applications.yaml`, write `releaseName: {{ $name }}`.
+   - In `platform/ingress-nginx/values.tpl.yaml`, write `$gitea.name` instead of
+     `$gitea.releaseName`.
+   - In `values.schema.json`, delete `releaseName`.
+
+3. Remove `ignoreDifferences`. No service uses it.
+
+   - In `values.yaml`, delete `ignoreDifferences: []`.
+   - In `values.schema.json`, delete it from the `argo` definition and from the
+     `argoDefaults` required list.
+   - In `templates/applications.yaml`, delete the `RespectIgnoreDifferences`
+     block near the top and the `ignoreDifferences` block at the end.
+
+4. In the `Makefile`, delete the `validate`, `render` and `config` targets. Move
+   `helm lint . --quiet` into the `test` target.
+
+**Expected differences:** `homelab-config.yaml` is gone.
+
+## Step 4: Give the values files plain fields
+
+Today the values files call helpers, for example
+`include "homelab.host" (list . .service.name)`. After this step they read
+fields:
+
+| Field | Replaces |
+|---|---|
+| `.service.fqdn` | `include "homelab.host" (list . .service.name)` |
+| `.service.database` | `include "homelab.databaseFor" (list . .service.name) \| fromYaml` |
+| `.services.gitea` | `include "homelab.service" (list . "gitea") \| fromYaml` |
+| `.postgres.address` | `include "homelab.postgres.address" .` |
+| `toYaml .Values.ingress.annotations` | `include "homelab.ingress.annotations" .` |
+
+1. In `templates/_helpers.tpl`, add a helper that works out every service once:
+
+   ```gotemplate
+   {{- define "homelab.services" -}}
+     {{- $ctx := . -}}
+     {{- $services := dict -}}
+     {{- range $name, $_ := $ctx.Values.services -}}
+       {{- $service := include "homelab.service" (list $ctx $name) | fromYaml -}}
+       {{- with $service.host -}}
+         {{- $_ := set $service "fqdn" (printf "%s.%s" . $ctx.Values.domain) -}}
+       {{- end -}}
+       {{- range $ctx.Values.postgres.databases -}}
+         {{- if eq .consumer.service $name -}}
+           {{- $_ := set $service "database" . -}}
+         {{- end -}}
+       {{- end -}}
+       {{- $_ := set $services $name $service -}}
+     {{- end -}}
+     {{- toYaml $services -}}
+   {{- end -}}
+   ```
+
+2. Replace `homelab.serviceValues` with this version. It passes the new fields
+   to every `values.tpl.yaml`:
+
+   ```gotemplate
+   {{- define "homelab.serviceValues" -}}
+     {{- $ctx := index . 0 -}}
+     {{- $services := include "homelab.services" $ctx | fromYaml -}}
+     {{- $service := index $services (index . 1) -}}
+     {{- $file := printf "%s/values.tpl.yaml" $service.dir -}}
+     {{- $source := $ctx.Files.Get $file -}}
+     {{- if $source -}}
+       {{- $postgres := dict "address" (printf "%s-rw.%s.svc.cluster.local:%v" $ctx.Values.postgres.cluster $services.postgres.namespace $ctx.Values.postgres.port) -}}
+       {{- $scope := dict "Values" $ctx.Values "Files" $ctx.Files "Template" $ctx.Template "Chart" $ctx.Chart "Release" $ctx.Release "service" $service "services" $services "postgres" $postgres -}}
+       {{- $values := tpl $source $scope | fromYaml -}}
+       {{- if hasKey $values "Error" -}}
+         {{- fail (printf "%s does not render to valid YAML: %s" $file $values.Error) -}}
+       {{- end -}}
+       {{- if $values -}}
+         {{- toYaml $values -}}
+       {{- end -}}
+     {{- end -}}
+   {{- end -}}
+   ```
+
+3. Move the `ssl-redirect` annotation into `values.yaml`:
+
+   ```yaml
+   ingress:
+     className: nginx
+     wildcardSecret: wildcard-tls
+     annotations:
+       nginx.ingress.kubernetes.io/ssl-redirect: "true"
+   ```
+
+   In `values.schema.json`, add `annotations` to `ingress`, and to its required
+   list:
+
+   ```json
+   "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
+   ```
+
+4. In each `values.tpl.yaml`, replace the helper calls with the fields, and
+   delete the `$host`, `$database`, `$ssh` and `$gitea` lines at the top. For
+   example, in `apps/gitea/values.tpl.yaml`:
+
+   ```yaml
+   # before
+   {{- $host := include "homelab.host" (list . .service.name) }}
+       ...
+       - host: {{ $host }}
+
+   # after
+       - host: {{ .service.fqdn }}
+   ```
+
+   The same goes for `$database` (`.service.database`), `$ssh`
+   (`.service.ssh`) and `$gitea` (`.services.gitea`).
+
+5. Delete the helpers nothing calls now: `homelab.fqdn`, `homelab.host`,
+   `homelab.ingress.annotations`, `homelab.postgres.host`,
+   `homelab.postgres.address` and `homelab.databaseFor`.
+
+**Expected differences:** none.
+
+A misspelled field renders as an empty value, as it does today. The diff in
+`generated/` shows it.
+
+## Step 5: Simplify the service charts and pin pfo
+
+1. Remove `required "…"` from the templates in `platform/*/templates` and
+   `apps/*/templates`. For example, `toYaml (required "…" .x)` becomes
+   `toYaml .x`. The values come from the generator now.
+
+2. In `platform/postgres/templates/cluster.yaml` and `databases.yaml`, replace
+   `{{- include "postgres.protect" $ | nindent 2 }}` with:
+
+   ```yaml
+     annotations:
+       argocd.argoproj.io/sync-options: Prune=false,Delete=false
+   ```
+
+   Then delete `platform/postgres/templates/_helpers.tpl`.
+
+3. Put pfo's variables straight into its Deployment. A changed variable then
+   restarts the pods by itself.
+
+   - Delete `apps/pfo/templates/configmap.yaml` and the `pfo.config` helper.
+   - In `apps/pfo/templates/deployment.yaml`, delete the `checksum/config`
+     annotation and the `configMapRef`. Add the variables under `env:`:
+
+     ```yaml
+               env:
+                 - name: SPRING_DATASOURCE_URL
+                   value: {{ .Values.database.url | quote }}
+                 {{- range $key, $value := .Values.config }}
+                 - name: {{ $key }}
+                   value: {{ $value | toString | quote }}
+                 {{- end }}
+     ```
+
+     Keep the `SPRING_DATASOURCE_USERNAME` and `SPRING_DATASOURCE_PASSWORD`
+     entries in the same `env:` list, and the `envFrom` for
+     `legacyEnvFromSecret`.
+
+4. Give pfo a fixed image version.
+
+   - In `apps/pfo/Chart.yaml`, add the version pfo's CI published last. For
+     example:
+
+     ```yaml
+     appVersion: "1.4.2"
+     ```
+
+     `MIGRATION.md` step 1 checks that it matches the image that runs now.
+
+   - In `apps/pfo/templates/deployment.yaml`, build the image from it:
+
+     ```yaml
+               image: {{ printf "%s:%s" .Values.image.repository .Chart.AppVersion | quote }}
+     ```
+
+   - In `apps/pfo/values.tpl.yaml`, delete `image.tag` and set
+     `pullPolicy: IfNotPresent`.
+
+**Expected differences:** pfo only. In `pfo.yaml`, the image tag is gone and the
+pull policy is `IfNotPresent`. In pfo's chart, the ConfigMap is gone, the
+variables are in the Deployment, and the image has a fixed version.
+
+To release a new pfo version later:
+
+```bash
+yq -i '.appVersion = "1.4.3"' apps/pfo/Chart.yaml
+git commit -am "chore(pfo): release 1.4.3"
+git push
+```
+
+You don't need `make generate` here, because `Chart.yaml` is not generated. To
+roll back, revert the commit. If you want this automated, pfo's CI can run the
+same commands.
+
+## Step 6: Tests and CI
+
+1. Delete `tests/style_test.sh` and its line in the `Makefile`. A broken
+   template now fails `make generate`, and the diff in `generated/` shows
+   layout mistakes.
+
+2. In `tests/charts_test.sh`, read the Applications from `generated/` instead of
+   rendering the root chart:
+
+   ```bash
+   for app in generated/*.yaml; do
+       path=$(yq '.spec.source.path // ""' "$app")
+       [[ -f "$path/Chart.yaml" ]] || continue
+       name=$(yq '.metadata.name' "$app")
+       namespace=$(yq '.spec.destination.namespace' "$app")
+       # the rest of the loop stays as it is
+   ```
+
+3. Add `.github/workflows/test.yaml`:
+
+   ```yaml
+   name: test
+   on: [push, pull_request]
+   jobs:
+     test:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v4
+         - uses: azure/setup-helm@v4
+           with:
+             version: v3.19.0
+         - run: |
+             sudo curl -fsSL -o /usr/local/bin/yq \
+                 https://github.com/mikefarah/yq/releases/download/v4.54.3/yq_linux_amd64
+             sudo chmod +x /usr/local/bin/yq
+         - run: make test
+         - run: make deps test-charts
+   ```
+
+**Expected differences:** none.
+
+`root` deploys `main` as soon as you push, so CI only reports a problem after
+the fact. If you want CI to pass first, push a branch and merge it afterwards.
+
+## Step 7: Add `make bootstrap`
+
+Add this target to the `Makefile`:
+
+```make
+bootstrap: deps
+	yq '.spec.source.helm.valuesObject' generated/argocd.yaml \
+	    | helm upgrade --install argocd platform/argocd -n argocd --create-namespace \
+	        -f - --wait --timeout 10m
+	kubectl apply -f generated/root.yaml
+```
+
+It installs Argo CD with the same values Argo CD later uses for itself. These
+include the health check that makes sync waves wait. Then it hands over to
+`root`.
+
+To rebuild from an empty cluster with Calico running:
+
+1. Remove the label kubeadm puts on a single node. Without this, MetalLB never
+   announces from it:
+
+   ```bash
+   kubectl label node --all node.kubernetes.io/exclude-from-external-load-balancers-
+   ```
+
+2. Create the secrets the README lists.
+
+3. Run `make bootstrap`, and wait. The sync waves start the services in order.
+
+Only use `make bootstrap` on a cluster where Argo CD does not manage itself
+yet: an empty one, or once during the switch. After that, Argo CD updates
+itself from git. Don't run Helm against it again.
+
+## Step 8: Rewrite the README
+
+Cover:
+
+- the daily workflow: edit, `make generate`, `make test`, commit, push;
+- a rebuild from zero, as in step 7, with the commands for every secret;
+- adding a service, and upgrading a chart;
+- releasing pfo;
+- what to do when `root` waits forever (see below);
+- the tool versions.
+
+Keep these rules:
+
+- Applications have no finalizers.
+- Services that ship CRDs have `prune: false`.
+- Objects that need their operator running have sync wave `"1"`.
+- Sync waves wait for health.
+- Secrets are never in git.
+
+Cut the template conventions down to what still helps a reader.
+
+## After the switch
+
+`MIGRATION.md` step 7 removes the settings that only the switch needs.
+
+## Good to know
+
+**Values reach a service through `root`.** Each Application carries its
+values, so a change takes effect when `root` applies the new Application. If an
+earlier service never becomes healthy, `root` keeps waiting for it and doesn't
+pick up new commits. This happens, for example, when the ingress VIP is outside
+the MetalLB pool: the ingress Service never gets an address. Push the fix,
+then:
+
+```bash
+argocd app terminate-op root
+```
+
+A service that fails, instead of waiting, ends the sync. The retry then picks up
+the newest commit by itself.
+
+**One broken file in `generated/` stops `root`.** `root` applies the whole
+folder. The files only come from helm and yq, and `make test` checks them.
+
+**Try a branch** by pausing `root` first. Otherwise it puts the Application
+back on `main`:
+
+```bash
+argocd app set root --sync-policy none
+argocd app set gitea --revision my-branch
+# when done
+argocd app set root --sync-policy automated --self-heal --auto-prune
+```
+
+**Apply a change right away** instead of waiting up to 3 minutes for Argo CD to
+poll git:
+
+```bash
+argocd app sync root
+```
+
+## Why it works this way
+
+| Option | Why not |
+|---|---|
+| No templates; every value written out | Easiest to read. But a shared value then has copies that must all change together: the domain is on 11 lines in 5 files. |
+| Argo CD runs the templates while it syncs (today) | No generated files. But a template mistake stops every service, and you only see real values by rendering. |
+| Values in separate generated files (`valueFiles`) | A close call. Each service would read its values from git by itself, so a change would not wait for `root`. But it means two generated files per service, and one more step in the generator. |
+| Render the upstream charts into git too | You could review every Kubernetes object. But that is about 70,000 lines, and every chart upgrade becomes a huge diff. |
+| An ApplicationSet | One template. But its Applications are not part of `root`'s sync waves. Ordering them needs Progressive Syncs, which is beta in Argo CD 3.5 and turns off automatic sync. |
+| Argo CD's Source Hydrator | The same idea, built into Argo CD. But it is beta, needs write access to the repository, and also commits the rendered upstream charts. |
+| Renovate | One more tool. pfo's version is one line in `Chart.yaml`. Chart versions are in `Chart.yaml` too, so you can add Renovate later without changing the generator. |
+
+## What to do next
+
+These are outside this guide, most important first:
+
+1. **Replace ingress-nginx.** It has had no releases and no security fixes since
+   March 2026. Gateway API is one option. After step 4, every Ingress setting
+   comes from `values.yaml`, which keeps the change small.
+2. **Set up backups.** Postgres and Gitea live on one disk. A disk failure loses
+   both. Back them up to storage outside the node, for example with
+   CloudNativePG's backups to an S3-compatible store.
+3. **Keep an offline copy of the secrets:** the Cloudflare token, the repository
+   key and the database passwords. A rebuild needs all of them.
+4. **Fix the smoke tests.** The `test.sh` scripts have addresses and hostnames
+   written in, such as `10.10.10.200`. They could read them from `values.yaml`
+   with yq instead.

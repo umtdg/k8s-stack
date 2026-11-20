@@ -6,10 +6,12 @@
 
 set -uo pipefail
 
+yq --version | grep -q mikefarah || { echo 'charts_test.sh needs mikefarah yq' >&2; exit 1; }
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 rc=0
 
-apps=$(helm template homelab "$ROOT" --set render.all=true -s templates/applications.yaml) || exit 1
+apps=$(helm template homelab "$ROOT" -s templates/applications.yaml) || exit 1
 repo=$(yq '.repo.url' "$ROOT/values.yaml")
 
 for name in $(yq -N 'select(.spec.source.repoURL == "'"$repo"'") | .metadata.name' <<<"$apps"); do

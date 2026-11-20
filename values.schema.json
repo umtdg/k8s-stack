@@ -4,8 +4,19 @@
   "description": "What each value must look like on its own. How values relate to each other is checked in templates/_validate.tpl.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["repo", "domain", "owner", "network", "ingress", "tls", "storage", "postgres", "secrets", "argoDefaults", "services"],
-
+  "required": [
+    "repo",
+    "domain",
+    "owner",
+    "network",
+    "ingress",
+    "tls",
+    "storage",
+    "postgres",
+    "secrets",
+    "argoDefaults",
+    "services"
+  ],
   "definitions": {
     "text": {
       "type": "string",
@@ -30,33 +41,73 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "project": { "$ref": "#/definitions/objectName" },
-        "managed": { "type": "boolean" },
-        "automated": { "type": "boolean" },
-        "prune": { "type": "boolean" },
-        "selfHeal": { "type": "boolean" },
-        "syncOptions": { "type": "array", "items": { "type": "string" } },
-        "retry": { "type": "object" },
-        "ignoreDifferences": { "type": "array", "items": { "type": "object" } },
-        "migrateFrom": { "type": "string" }
+        "project": {
+          "$ref": "#/definitions/objectName"
+        },
+        "automated": {
+          "type": "boolean"
+        },
+        "prune": {
+          "type": "boolean"
+        },
+        "selfHeal": {
+          "type": "boolean"
+        },
+        "syncOptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "retry": {
+          "type": "object"
+        },
+        "ignoreDifferences": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "migrateFrom": {
+          "type": "string"
+        }
       }
     },
     "service": {
       "description": "One entry of the catalog. Keys not listed here are allowed: a service may carry data of its own for its values.tpl.yaml.",
       "type": "object",
-      "required": ["dir", "wave", "namespace"],
+      "required": [
+        "dir",
+        "wave",
+        "namespace"
+      ],
       "properties": {
         "dir": {
           "description": "Path inside the repository: no leading or trailing slash, no segment starting with a dot.",
           "type": "string",
           "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$"
         },
-        "wave": { "type": "integer" },
-        "namespace": { "$ref": "#/definitions/objectName" },
-        "createNamespace": { "type": "boolean" },
-        "namespaceLabels": { "type": "object", "additionalProperties": { "type": "string" } },
-        "releaseName": { "$ref": "#/definitions/objectName" },
-        "skipDryRunOnMissingResource": { "type": "boolean" },
+        "wave": {
+          "type": "integer"
+        },
+        "namespace": {
+          "$ref": "#/definitions/objectName"
+        },
+        "createNamespace": {
+          "type": "boolean"
+        },
+        "namespaceLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "releaseName": {
+          "$ref": "#/definitions/objectName"
+        },
+        "skipDryRunOnMissingResource": {
+          "type": "boolean"
+        },
         "host": {
           "description": "A single label: the wildcard certificate covers exactly one level under the domain.",
           "$ref": "#/definitions/label"
@@ -65,115 +116,191 @@
           "description": "The chart lives in another git repository.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["repo", "path", "ref"],
+          "required": [
+            "repo",
+            "path",
+            "ref"
+          ],
           "properties": {
-            "repo": { "$ref": "#/definitions/text" },
-            "path": { "$ref": "#/definitions/text" },
-            "ref": { "$ref": "#/definitions/text" }
+            "repo": {
+              "$ref": "#/definitions/text"
+            },
+            "path": {
+              "$ref": "#/definitions/text"
+            },
+            "ref": {
+              "$ref": "#/definitions/text"
+            }
           }
         },
-        "argo": { "$ref": "#/definitions/argo" }
-      }
+        "argo": {
+          "$ref": "#/definitions/argo"
+        }
+      },
+      "additionalProperties": false
     },
     "secret": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["service", "name"],
+      "required": [
+        "service",
+        "name"
+      ],
       "properties": {
-        "service": { "$ref": "#/definitions/label" },
-        "name": { "$ref": "#/definitions/objectName" },
-        "key": { "$ref": "#/definitions/text" }
+        "service": {
+          "$ref": "#/definitions/label"
+        },
+        "name": {
+          "$ref": "#/definitions/objectName"
+        },
+        "key": {
+          "$ref": "#/definitions/text"
+        }
       }
     }
   },
-
   "properties": {
     "repo": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["url", "revision"],
+      "required": [
+        "url",
+        "revision"
+      ],
       "properties": {
-        "url": { "$ref": "#/definitions/text" },
-        "revision": { "$ref": "#/definitions/text" }
+        "url": {
+          "$ref": "#/definitions/text"
+        },
+        "revision": {
+          "$ref": "#/definitions/text"
+        }
       }
     },
-
     "domain": {
       "description": "A lower-case DNS name.",
       "type": "string",
       "pattern": "^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$"
     },
-
     "owner": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["email", "user"],
+      "required": [
+        "email",
+        "user"
+      ],
       "properties": {
-        "email": { "type": "string", "pattern": "^[^@\\s]+@[^@\\s]+$" },
-        "user": { "$ref": "#/definitions/text" }
+        "email": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@[^@\\s]+$"
+        },
+        "user": {
+          "$ref": "#/definitions/text"
+        }
       }
     },
-
     "network": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["nodeIP", "ingressVIP", "pool"],
+      "required": [
+        "nodeIP",
+        "ingressVIP",
+        "pool"
+      ],
       "properties": {
-        "nodeIP": { "$ref": "#/definitions/ipv4" },
-        "ingressVIP": { "$ref": "#/definitions/ipv4" },
+        "nodeIP": {
+          "$ref": "#/definitions/ipv4"
+        },
+        "ingressVIP": {
+          "$ref": "#/definitions/ipv4"
+        },
         "pool": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["name", "start", "end", "interface"],
+          "required": [
+            "name",
+            "start",
+            "end",
+            "interface"
+          ],
           "properties": {
-            "name": { "$ref": "#/definitions/objectName" },
-            "start": { "$ref": "#/definitions/ipv4" },
-            "end": { "$ref": "#/definitions/ipv4" },
-            "interface": { "$ref": "#/definitions/text" }
+            "name": {
+              "$ref": "#/definitions/objectName"
+            },
+            "start": {
+              "$ref": "#/definitions/ipv4"
+            },
+            "end": {
+              "$ref": "#/definitions/ipv4"
+            },
+            "interface": {
+              "$ref": "#/definitions/text"
+            }
           }
         }
       }
     },
-
     "ingress": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["className", "wildcardSecret"],
+      "required": [
+        "className",
+        "wildcardSecret"
+      ],
       "properties": {
-        "className": { "$ref": "#/definitions/objectName" },
-        "wildcardSecret": { "$ref": "#/definitions/objectName" }
+        "className": {
+          "$ref": "#/definitions/objectName"
+        },
+        "wildcardSecret": {
+          "$ref": "#/definitions/objectName"
+        }
       }
     },
-
     "tls": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["issuer", "resolvers"],
+      "required": [
+        "issuer",
+        "resolvers"
+      ],
       "properties": {
         "issuer": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["prod", "staging"],
+          "required": [
+            "prod",
+            "staging"
+          ],
           "properties": {
-            "prod": { "$ref": "#/definitions/objectName" },
-            "staging": { "$ref": "#/definitions/objectName" }
+            "prod": {
+              "$ref": "#/definitions/objectName"
+            },
+            "staging": {
+              "$ref": "#/definitions/objectName"
+            }
           }
         },
         "resolvers": {
           "description": "host:port, at least one.",
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "pattern": "^[^:\\s]+:[0-9]+$" }
+          "items": {
+            "type": "string",
+            "pattern": "^[^:\\s]+:[0-9]+$"
+          }
         }
       }
     },
-
     "storage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["className", "hostPath"],
+      "required": [
+        "className",
+        "hostPath"
+      ],
       "properties": {
-        "className": { "$ref": "#/definitions/objectName" },
+        "className": {
+          "$ref": "#/definitions/objectName"
+        },
         "hostPath": {
           "description": "An absolute path on the node.",
           "type": "string",
@@ -181,34 +308,56 @@
         }
       }
     },
-
     "postgres": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["cluster", "port", "databases"],
+      "required": [
+        "cluster",
+        "port",
+        "databases"
+      ],
       "properties": {
-        "cluster": { "$ref": "#/definitions/objectName" },
-        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "cluster": {
+          "$ref": "#/definitions/objectName"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
         "databases": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["name", "secret", "consumer"],
+            "required": [
+              "name",
+              "secret",
+              "consumer"
+            ],
             "properties": {
               "name": {
                 "description": "A plain Postgres identifier: it is the role, the database and its owner.",
                 "type": "string",
                 "pattern": "^[a-z_][a-z0-9_]*$"
               },
-              "secret": { "$ref": "#/definitions/objectName" },
+              "secret": {
+                "$ref": "#/definitions/objectName"
+              },
               "consumer": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["service", "secret"],
+                "required": [
+                  "service",
+                  "secret"
+                ],
                 "properties": {
-                  "service": { "$ref": "#/definitions/label" },
-                  "secret": { "$ref": "#/definitions/objectName" }
+                  "service": {
+                    "$ref": "#/definitions/label"
+                  },
+                  "secret": {
+                    "$ref": "#/definitions/objectName"
+                  }
                 }
               }
             }
@@ -216,35 +365,75 @@
         }
       }
     },
-
     "secrets": {
       "type": "object",
-      "required": ["cloudflare", "giteaAdmin", "argoRepo"],
-      "additionalProperties": { "$ref": "#/definitions/secret" },
+      "required": [
+        "cloudflare",
+        "giteaAdmin",
+        "argoRepo"
+      ],
+      "additionalProperties": {
+        "$ref": "#/definitions/secret"
+      },
       "properties": {
         "cloudflare": {
-          "allOf": [{ "$ref": "#/definitions/secret" }, { "required": ["key"] }]
+          "allOf": [
+            {
+              "$ref": "#/definitions/secret"
+            },
+            {
+              "required": [
+                "key"
+              ]
+            }
+          ]
         }
       }
     },
-
     "argoDefaults": {
       "allOf": [
-        { "$ref": "#/definitions/argo" },
-        { "required": ["project", "managed", "automated", "prune", "selfHeal", "syncOptions", "retry", "ignoreDifferences", "migrateFrom"] }
+        {
+          "$ref": "#/definitions/argo"
+        },
+        {
+          "required": [
+            "project",
+            "automated",
+            "prune",
+            "selfHeal",
+            "syncOptions",
+            "retry",
+            "ignoreDifferences",
+            "migrateFrom"
+          ]
+        }
       ]
     },
-
     "services": {
       "description": "The catalog. Other services derive values from the four required ones.",
       "type": "object",
-      "required": ["argocd", "ingress-nginx", "cert-manager", "postgres"],
+      "required": [
+        "argocd",
+        "ingress-nginx",
+        "cert-manager",
+        "postgres"
+      ],
       "propertyNames": {
-        "allOf": [{ "$ref": "#/definitions/label" }, { "not": { "const": "root" } }]
+        "allOf": [
+          {
+            "$ref": "#/definitions/label"
+          },
+          {
+            "not": {
+              "enum": ["root", "homelab"]
+            }
+          }
+        ]
       },
-      "additionalProperties": { "$ref": "#/definitions/service" }
+      "additionalProperties": {
+        "$ref": "#/definitions/service"
+      }
     },
-
     "render": {
       "type": "object",
       "additionalProperties": false,
@@ -255,7 +444,27 @@
         }
       }
     },
-
-    "global": { "type": "object" }
+    "ssh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "port",
+        "listenPort"
+      ],
+      "properties": {
+        "port": {
+          "type": "integer"
+        },
+        "listenPort": {
+          "type": "integer"
+        }
+      }
+    },
+    "legacyEnvFromSecret": {
+      "$ref": "#/definitions/objectName"
+    },
+    "global": {
+      "type": "object"
+    }
   }
 }

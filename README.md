@@ -99,8 +99,9 @@ helm template homelab . --set render.all=true -s templates/applications.yaml \
    `namespace`.
 4. `make test`, then `make deps test-charts`.
 5. Set `argo.managed: true` when Argo CD should own it. It syncs on its own
-   from then on; with `argo.automated: false`, `root` waits at its wave until
-   it has been synced by hand.
+   from then on. With `argo.automated: false` it waits to be synced by hand,
+   and `root` waits with it, unless the service's objects already run: then
+   the Application is healthy before its first sync and `root` goes on.
 
 A service that needs a database also gets an entry under `postgres.databases`
 with `consumer.service` set to its name; its values file reads the result

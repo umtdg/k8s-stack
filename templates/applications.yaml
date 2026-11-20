@@ -2,7 +2,6 @@
 {{- $argocdNamespace := include "homelab.argocd.namespace" . }}
 {{- range $name, $_ := .Values.services }}
 {{- $svc := include "homelab.service" (list $ $name) | fromYaml }}
-{{- if or $svc.argo.managed ($.Values.render | default dict).all }}
 {{- $values := include "homelab.serviceValues" (list $ $name) }}
 {{- $syncOptions := $svc.argo.syncOptions | default list }}
 {{- if $svc.createNamespace }}
@@ -69,5 +68,4 @@ spec:
   ignoreDifferences:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-{{- end }}
 {{- end }}
