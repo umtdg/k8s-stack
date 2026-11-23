@@ -29,7 +29,6 @@ spec:
             secret: {{ $database.consumer.secret }}
             usernameKey: username
             passwordKey: password
-          legacyEnvFromSecret: pfo-secret
         ingress:
           host: pfo.{{ .Values.domain }}
           className: {{ .Values.ingress.className }}

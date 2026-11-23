@@ -309,13 +309,19 @@ argocd app sync postgres --grpc-web
    kubectl -n argocd delete appproject homelab
    ```
 
-4. Give pfo its own database secret, copied from the one Postgres uses:
+4. Give pfo its own database secret, copied from the one Postgres uses. This
+   creates `pfo-db`, or updates it if it's already there, so it's safe to run
+   again:
 
    ```bash
    creds() { kubectl -n cnpg get secret pfo-db-creds -o jsonpath="{.data.$1}" | base64 -d; }
    kubectl -n default create secret generic pfo-db \
-       --from-literal=username="$(creds username)" --from-literal=password="$(creds password)"
+       --from-literal=username="$(creds username)" --from-literal=password="$(creds password)" \
+       --dry-run=client -o yaml | kubectl apply -f -
    ```
+
+   If `pfo-db` already existed, kubectl warns about a missing
+   `last-applied-configuration` annotation. That's harmless.
 
 5. Remove the settings that only the switch needed:
 
