@@ -33,6 +33,9 @@ spec:
       - name: {{ required "databases[].name is required" .name }}
         ensure: present
         login: true
+        {{- /* CloudNativePG's defaults. Without them Argo CD shows the Cluster as OutOfSync forever. */}}
+        connectionLimit: -1
+        inherit: true
         passwordSecret:
           name: {{ required "databases[].secret is required" .secret }}
       {{- end }}
