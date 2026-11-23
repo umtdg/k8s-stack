@@ -260,19 +260,6 @@ argocd app terminate-op root
 **`root` shows an error and does nothing.** The root chart doesn't render. Run
 `make test` to see why. Everything that already runs keeps running.
 
-## During the migration
-
-The switch from the old `apply.sh` installs isn't done yet. See
-[MIGRATION.md](MIGRATION.md). Until then:
-
-- the old install files are still in the service folders;
-- some settings are only there for the switch: the
-  `client-side-apply-migration-manager` annotation on ingress-nginx, gitea and
-  argocd, and `legacyEnvFromSecret: pfo-secret` for pfo. pfo still logs in with
-  the old `pfo-secret`.
-
-Step 7 of MIGRATION.md removes all of that, and this section too.
-
 ## Later
 
 Left out for now, to keep things simple:
