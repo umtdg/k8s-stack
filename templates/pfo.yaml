@@ -1,0 +1,48 @@
+{{- $database := .Values.postgres.databases.pfo }}
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pfo
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repo.url }}
+    targetRevision: {{ .Values.repo.revision | quote }}
+    path: apps/pfo
+    helm:
+      valuesObject:
+        replicas: 1
+        image:
+          repository: umtdg/pfo
+          tag: latest
+          pullPolicy: Always
+        port: 8080
+        config:
+          SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+        database:
+          url: jdbc:postgresql://{{ printf "%s-rw.%s.svc.cluster.local:%v" .Values.postgres.cluster .Values.postgres.namespace .Values.postgres.port }}/{{ $database.name }}
+          credentials:
+            secret: {{ $database.consumer.secret }}
+            usernameKey: username
+            passwordKey: password
+          legacyEnvFromSecret: pfo-secret
+        ingress:
+          host: pfo.{{ .Values.domain }}
+          className: {{ .Values.ingress.className }}
+          annotations:
+            {{- toYaml .Values.ingress.annotations | nindent 12 }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      {{- toYaml .Values.retry | nindent 6 }}

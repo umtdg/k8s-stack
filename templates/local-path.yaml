@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: local-path
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-25"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rancher/local-path-provisioner.git
+    targetRevision: v0.0.37
+    path: deploy/chart/local-path-provisioner
+    helm:
+      valuesObject:
+        fullnameOverride: local-path-provisioner
+        storageClass:
+          create: true
+          name: {{ .Values.storage.className }}
+          defaultClass: true
+          provisionerName: rancher.io/local-path
+          reclaimPolicy: Delete
+          volumeBindingMode: WaitForFirstConsumer
+        nodePathMap:
+          - node: DEFAULT_PATH_FOR_NON_LISTED_NODES
+            paths:
+              - /mnt/data/local-path
+        configmap:
+          name: local-path-config
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: local-path-storage
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
+    retry:
+      {{- toYaml .Values.retry | nindent 6 }}

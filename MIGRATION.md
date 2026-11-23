@@ -3,24 +3,27 @@
 This guide moves the cluster from the old `apply.sh` installs to Argo CD.
 Follow the steps in order.
 
-Finish `SIMPLIFICATION.md` first. This guide uses `make generate`,
-`generated/` and `make bootstrap`, which that guide adds.
+Finish `SIMPLIFICATION.md` first. This guide uses its templates and
+`make bootstrap`.
 
 ## Before you start
 
 You need:
 
 - kubectl, pointed at the cluster;
-- helm 4.3 and mikefarah's yq, as in `SIMPLIFICATION.md`;
+- helm and mikefarah's yq, as in `SIMPLIFICATION.md`;
+- the `argocd` CLI, for steps 6 and 7;
 - this repository, checked out on the branch you will merge.
 
 What happens to the cluster:
 
 - **Kept:** Calico, the Postgres cluster `pg` with its data, Gitea's
-  repositories (PVC `gitea-shared-storage`), the AppProject `homelab`, and
-  every secret except one. Argo CD is upgraded in place.
+  repositories (PVC `gitea-shared-storage`), and every secret except one.
+  Argo CD is upgraded in place.
 - **Removed, then installed again by Argo CD:** MetalLB, local-path,
   cert-manager, ingress-nginx, the CloudNativePG operator, pfo and Gitea.
+- **Removed for good:** the AppProject `homelab`. The new Applications use the
+  built-in `default` project.
 - **Downtime:** from step 3 until ingress-nginx is back, the services can't be
   reached from outside the cluster.
 
@@ -31,43 +34,27 @@ What happens to the cluster:
 
 ## Step 1: Prepare the repository
 
-1. Find the pfo image that runs now:
-
-   ```bash
-   kubectl -n default get pod -l app=pfo \
-       -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'
-   ```
-
-   Find the version tag with the same digest. This prints the digest of a
-   tag, on the `Digest:` line:
-
-   ```bash
-   docker buildx imagetools inspect umtdg/pfo:1.4.2
-   ```
-
-   Set that tag as `appVersion` in `apps/pfo/Chart.yaml`. pfo then keeps
-   running the same image after the switch.
-
-2. Stop postgres from syncing on its own, so you can check its changes first.
-   In `values.yaml`, add `automated: false` to its `argo` block:
+1. Stop postgres from syncing on its own, so you can check its changes before
+   they happen. In `templates/postgres.yaml`, delete the `automated` block:
 
    ```yaml
-     postgres:
-       ...
-       argo:
-         prune: false
-         automated: false
+     syncPolicy:
+       automated:          # delete this line
+         prune: false      # and this one
+         selfHeal: true    # and this one
+       syncOptions:
    ```
 
-3. Generate and test:
+   Without `automated`, Argo CD only syncs postgres when you tell it to. It
+   still shows you what a sync would change. Step 7 puts the block back.
+
+2. Test:
 
    ```bash
-   make generate
-   make test
-   make deps test-charts
+   make deps test
    ```
 
-4. Check that nothing in the cluster follows this repository yet:
+3. Check that nothing in the cluster follows this repository yet:
 
    ```bash
    kubectl -n argocd get applications
@@ -75,7 +62,10 @@ What happens to the cluster:
 
    It should print `No resources found`.
 
-5. Merge the branch into `main` and push. Nothing deploys yet.
+4. Merge the branch into `main` and push. Nothing deploys yet, because `root`
+   doesn't exist in the cluster.
+
+pfo keeps the `latest` image, as it runs today.
 
 ## Step 2: Back up
 
@@ -177,7 +167,8 @@ reuses it, as long as it still matches.
 
 ## Step 4: Create the secrets
 
-Only the Cloudflare token is gone. Create it again:
+Only the Cloudflare token is gone. Create it again. Its name and key are the
+ones in `templates/cert-manager.yaml`:
 
 ```bash
 kubectl create namespace cert-manager
@@ -208,8 +199,23 @@ The other secrets stay as they are:
 make bootstrap
 ```
 
-This upgrades Argo CD to `platform/argocd`, with the values from
-`generated/argocd.yaml`. Then it applies `generated/root.yaml`.
+It runs these commands:
+
+1. `make deps` downloads the upstream charts, including Argo CD's.
+2. It renders `templates/argocd.yaml` and takes the values out of it:
+
+   ```bash
+   helm template homelab . -s templates/argocd.yaml | yq '.spec.source.helm.valuesObject'
+   ```
+
+   These are the values Argo CD's own Application uses later, so Argo CD
+   starts out the same way it will manage itself.
+
+3. It upgrades the Argo CD that runs now, the Helm release `argocd` that
+   `apply.sh` installed, to `platform/argocd` with those values. `--wait`
+   waits until the new version runs.
+4. It renders `templates/root.yaml` and applies it with kubectl. This creates
+   `root`. From here on, `root` creates everything else.
 
 Check that the Application health check is installed:
 
@@ -227,9 +233,10 @@ once instead of in order.
 kubectl -n argocd get applications -w
 ```
 
-The services start in this order, each one when the one before is healthy:
-metallb, local-path, cert-manager, ingress-nginx, cnpg. Then postgres, pfo,
-gitea and argocd.
+First `root` appears. It renders the root chart and creates one Application
+per file in `templates/`. Then the services start in wave order, each wave
+when the one before is healthy: metallb, local-path, cert-manager,
+ingress-nginx, cnpg, postgres, then pfo and gitea together, then argocd.
 
 Until ingress-nginx is up, reach the Argo CD UI through a port forward:
 
@@ -237,16 +244,34 @@ Until ingress-nginx is up, reach the Argo CD UI through a port forward:
 kubectl -n argocd port-forward svc/argocd-server 8080:80
 ```
 
-postgres does not sync on its own (step 1). It shows as Healthy and OutOfSync,
-because the database already runs, so the other services don't wait for it.
-Check what it would change:
+In a second terminal, log in with the CLI through that port forward. Argo CD
+serves plain HTTP behind nginx, hence `--plaintext`:
+
+```bash
+argocd login localhost:8080 --plaintext --grpc-web --username admin
+```
+
+It asks for the admin password. If you never changed it,
+`argocd admin initial-password -n argocd` prints it.
+
+postgres doesn't sync on its own (step 1). It shows as Healthy and OutOfSync.
+Healthy, because the database already runs, so the later waves don't wait for
+it. OutOfSync, because the cluster doesn't match git yet. Check what a sync
+would change:
 
 ```bash
 argocd app diff postgres --grpc-web
 ```
 
-The diff should only add Argo CD's annotations. If it removes anything under
-`spec`, stop and read it first. Until you sync, the database stays as it is.
+What to expect:
+
+- Argo CD adds its own annotations and labels.
+- The managed roles are listed in a different order: gitea first, then
+  portfolio. CloudNativePG matches roles by name, so the order changes
+  nothing.
+
+If the diff removes anything else under `spec`, stop and read it first. Until
+you sync, the database stays as it is.
 
 When the diff looks right, sync it:
 
@@ -274,9 +299,17 @@ argocd app sync postgres --grpc-web
    kubectl -n argocd delete secret -l owner=helm,name=argocd
    ```
 
-   Only use `make bootstrap` on an empty cluster after this.
+   After this, only use `make bootstrap` on an empty cluster.
 
-3. Give pfo its own database secret, copied from the one Postgres uses:
+3. Delete the old AppProject. First check that every Application uses
+   `default`:
+
+   ```bash
+   kubectl -n argocd get applications -o custom-columns=NAME:.metadata.name,PROJECT:.spec.project
+   kubectl -n argocd delete appproject homelab
+   ```
+
+4. Give pfo its own database secret, copied from the one Postgres uses:
 
    ```bash
    creds() { kubectl -n cnpg get secret pfo-db-creds -o jsonpath="{.data.$1}" | base64 -d; }
@@ -284,16 +317,28 @@ argocd app sync postgres --grpc-web
        --from-literal=username="$(creds username)" --from-literal=password="$(creds password)"
    ```
 
-4. In `values.yaml`, remove the settings only the switch needed:
+5. Remove the settings that only the switch needed:
 
-   - `automated: false` under `services.postgres.argo`;
-   - `migrateFrom` under argocd, gitea and ingress-nginx;
-   - `legacyEnvFromSecret` under `services.pfo`.
+   - In `templates/postgres.yaml`, put the `automated` block back:
 
-   Then generate, test and push:
+     ```yaml
+       syncPolicy:
+         automated:
+           prune: false
+           selfHeal: true
+         syncOptions:
+     ```
+
+   - In `templates/ingress-nginx.yaml`, `templates/gitea.yaml` and
+     `templates/argocd.yaml`, delete the line
+     `argocd.argoproj.io/client-side-apply-migration-manager: helm`. Argo CD
+     has taken over from Helm.
+   - In `templates/pfo.yaml`, delete the line
+     `legacyEnvFromSecret: pfo-secret`. pfo then logs in with `pfo-db`.
+
+   Then test and push:
 
    ```bash
-   make generate
    make test
    git commit -am "chore: finish the switch to Argo CD"
    git push
@@ -305,7 +350,7 @@ argocd app sync postgres --grpc-web
    kubectl -n default delete secret pfo-secret
    ```
 
-5. Delete the old install files:
+6. Delete the old install files:
 
    - `apply.sh`, `spec.yaml` and `legacy-values.yaml` in every service folder;
    - `apps/pfo/cm.yaml`, `apps/pfo/deploy.yaml` and `apps/pfo/service.yaml`;
@@ -322,6 +367,9 @@ then:
 ```bash
 argocd app terminate-op root
 ```
+
+**`root` shows an error and creates nothing.** The root chart doesn't render.
+Run `make test` on your machine to see why, fix it and push.
 
 **A database is lost.** Restore it from the backup into an empty database. For
 example, for `portfolio`:

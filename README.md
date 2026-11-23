@@ -1,224 +1,284 @@
 # k8s-stack
 
-Everything that runs on the cluster, one directory per service.
+Everything that runs on my homelab cluster. Argo CD deploys all of it from
+this repo.
 
 ```
-Chart.yaml  values.yaml  templates/   the chart Argo CD's `root` Application renders
-platform/<service>/                   what the cluster needs to run anything
-apps/<service>/                       what the cluster is for
-tests/                                tests of the root chart
+Chart.yaml, values.yaml, templates/   the root chart: one Argo CD Application per service
+platform/<service>/                   stuff the cluster needs before anything else works
+apps/<service>/                       the apps themselves (gitea, pfo)
+tests/                                tests for the charts
 ```
 
-## The root chart
+## How it works
 
-The repository root is a Helm chart. It turns [`values.yaml`](values.yaml)
-into:
+It's the "app of apps" setup from the Argo CD docs
+([Cluster Bootstrapping](https://argo-cd.readthedocs.io/en/stable/operator-manual/cluster-bootstrapping/#app-of-apps-pattern-alternative)).
 
-- the `homelab` AppProject,
-- one Application per service that has `argo.managed: true`,
-- the `homelab-config` ConfigMap: every shared value in resolved form,
-- the `root` Application itself.
+- `root` is an Argo CD Application that points at the top of this repo. The
+  top of the repo is a Helm chart, the root chart.
+- Every file in `templates/` is one Application, one per service. `root`
+  renders the chart and creates them.
+- Each of those points at a chart in `platform/` or `apps/`, and carries the
+  values for it under `valuesObject`. local-path is different: its chart comes
+  straight from rancher's repo.
+- `templates/root.yaml` is in there too, so `root` keeps itself up to date.
 
-It also validates `values.yaml` and each service's directory, in two layers.
-[`values.schema.json`](values.schema.json) says what each value must look like
-on its own; Helm applies it before any template runs.
-[`templates/_validate.tpl`](templates/_validate.tpl) checks how values relate
-to each other. A render that fails either one produces nothing.
+```
+root      renders the root chart     -> the Applications: metallb, local-path, ..., argocd, root
+metallb   renders platform/metallb   -> MetalLB running in the cluster
+gitea     renders apps/gitea         -> Gitea running in the cluster
+...
+```
 
-## A service directory
+When you push:
 
-| File | What |
+1. Argo CD checks git every 3 minutes.
+2. `root` renders the root chart again. If an Application changed, it applies
+   the new one.
+3. That Application syncs its service with the new values.
+
+### The order
+
+Services come up in sync waves. `root` starts the next wave only when
+everything in the one before is healthy.
+
+| Wave | Service | Why here |
+|---|---|---|
+| -30 | metallb | Gives out IPs. ingress-nginx needs one. |
+| -25 | local-path | Gives out volumes. postgres and gitea need them. |
+| -20 | cert-manager | Gets certificates. ingress-nginx asks it for the wildcard one. |
+| -15 | ingress-nginx | Takes all web traffic on the VIP. |
+| -10 | cnpg | The Postgres operator. |
+| -5 | postgres | The database cluster `pg`. Needs cnpg. |
+| 0 | pfo, gitea | Need their databases. |
+| 10 | argocd | Argo CD updating itself. It already runs, so it goes last. |
+
+The waves only wait because of the Application health check in
+`templates/argocd.yaml` (`resource.customizations.health.argoproj.io_Application`).
+Argo CD doesn't have one built in. Without it, everything starts at once.
+
+To see the order:
+
+```bash
+grep -H sync-wave templates/*.yaml
+```
+
+## values.yaml
+
+It only has values that more than one template uses, or that have to match
+each other. For example, the ingress VIP has to be inside the MetalLB pool.
+
+If only one template uses a value, write it right in that template. If a
+second template needs it later, move it to `values.yaml`.
+
+There are no checks on `values.yaml` right now. A typo usually just renders as
+an empty value, so look at what you render before you push.
+
+## A service folder
+
+| File | What it is |
 |---|---|
-| `Chart.yaml` | The service's chart. An upstream chart is a dependency, pinned to one exact version. |
-| `templates/` | Objects of our own that belong to the service: MetalLB's address pool, the ACME issuers, the wildcard certificate. |
-| `values.tpl.yaml` | The values of that chart. The only values file the service has. |
-| `apply.sh`, `test.sh`, … | Scripts, tests and fixtures. |
+| `Chart.yaml` | The service's chart. The upstream chart is a dependency, with an exact version. |
+| `Chart.lock` | Written by `make deps`. Commit it. The downloaded charts in `charts/` are ignored by git. |
+| `templates/` | Our own objects: the MetalLB pool, the issuers, the wildcard certificate, the Postgres cluster, pfo. |
+| `test.sh`, `test.yaml` | Smoke tests against the running cluster. |
+| `apply.sh`, `spec.yaml`, `legacy-values.yaml`, ... | The old install. They go away after the migration. |
 
-`values.tpl.yaml` is a template. It sees `values.yaml` as `.Values` and its
-own catalog entry, with defaults resolved, as `.service`. Anything shared is
-written as an expression, never as a literal:
-
-```yaml
-ingress:
-  className: {{ .Values.ingress.className }}
-  hosts:
-    - host: {{ include "homelab.host" (list . .service.name) }}
-```
-
-Values for an upstream chart sit under that chart's name (`metallb:`,
-`argo-cd:`), next to the values of the service's own templates. The result
-becomes `spec.source.helm.valuesObject` of the Application.
-
-It is not named `values.yaml` on purpose: Helm would load a file of that name
-into the chart as it is, unrendered.
-
-`platform/local-path` has no `Chart.yaml`. Its upstream chart is not
-published to a Helm repository, so the catalog points at the upstream git
-repository instead (`git:`).
-
-## Where a value lives
-
-| What | Where |
-|---|---|
-| A value more than one thing depends on: domain, VIP, pool, storage class, Postgres location, hostnames, secret names | `values.yaml`, once |
-| Which directory, namespace and sync wave a service has | `values.yaml` → `services` |
-| Which upstream chart, at which version | `<service>/Chart.yaml` |
-| The Helm values of one service | `<service>/values.tpl.yaml` |
-| How a value is derived from others (FQDN, Postgres host) | `templates/_helpers.tpl` |
-| What one value must look like: required, type, format | `values.schema.json` |
-| How values must relate: the VIP inside the pool, no hostname twice, every chart pinned | `templates/_validate.tpl` |
+The values for a service aren't in its folder. They're in
+`templates/<service>.yaml`.
 
 ## Commands
 
-```bash
-make validate      # values.yaml is consistent, every Application renders
-make test          # the checks reject what they should; templates follow the conventions
-make deps          # download the upstream charts named in each Chart.yaml
-make test-charts   # every chart here renders with the values it is given
-make render        # every Application, managed or not
-make config        # every shared value, resolved, as KEY=value
-```
-
-`validate`, `test`, `render` and `config` need no network. `make deps` writes
-`Chart.lock` next to each `Chart.yaml` the first time; commit those files. The
-downloaded charts themselves are ignored by git.
-
-The values one service gets:
+You need helm and mikefarah's yq. That's the Go one, not the Python one; on
+Arch it's `go-yq`.
 
 ```bash
-helm template homelab . --set render.all=true -s templates/applications.yaml \
-    | yq 'select(.metadata.name == "gitea") | .spec.source.helm.valuesObject'
+make deps        # download the upstream charts and write Chart.lock
+make test        # the root chart renders, and every service chart renders with its values (needs make deps)
+make bootstrap   # install Argo CD and create root. Only for a fresh cluster
 ```
 
-## Adding a service
+See what Argo CD gets for one service:
 
-1. Create `platform/<name>/` or `apps/<name>/` with a `Chart.yaml`. For an
-   upstream chart, list it under `dependencies` with an exact version.
-2. Add `values.tpl.yaml` if it takes values.
-3. Add an entry under `services` in `values.yaml`: `dir`, `wave`,
-   `namespace`.
-4. `make test`, then `make deps test-charts`.
-5. Set `argo.managed: true` when Argo CD should own it. It syncs on its own
-   from then on. With `argo.automated: false` it waits to be synced by hand,
-   and `root` waits with it, unless the service's objects already run: then
-   the Application is healthy before its first sync and `root` goes on.
+```bash
+helm template homelab . -s templates/gitea.yaml
+```
 
-A service that needs a database also gets an entry under `postgres.databases`
-with `consumer.service` set to its name; its values file reads the result
-with `include "homelab.databaseFor" (list . .service.name)`.
+## Common tasks
 
-## Upgrading an upstream chart
+**Change a shared value.** Edit `values.yaml`, run `make test`, commit, push.
+To see what changes:
 
-Change the version in the service's `Chart.yaml`, run
-`helm dependency update <dir>`, and commit `Chart.yaml` and `Chart.lock`
+```bash
+git stash
+helm template homelab . > /tmp/old.yaml
+git stash pop
+helm template homelab . | diff /tmp/old.yaml -
+```
+
+**Add a service.**
+
+1. Make its chart in `platform/<name>/` or `apps/<name>/`. For an upstream
+   chart, add it under `dependencies` in `Chart.yaml` with an exact version.
+2. Copy the template of a similar service to `templates/<name>.yaml`. Change
+   the name, wave, namespace, path, sync settings and values.
+3. Give it a wave after everything it needs.
+4. Run `make deps test`, commit, push.
+
+**Remove a service.** Delete its template. `root` deletes the Application, but
+what it deployed keeps running, because there's no finalizer. Delete that by
+hand if you want it gone.
+
+**Upgrade an upstream chart.** Change the version in `Chart.yaml`, run
+`helm dependency update <folder>`, and commit `Chart.yaml` and `Chart.lock`
 together.
 
-## Rules the templates rely on
+**Sync right now** instead of waiting up to 3 minutes:
 
-- **Applications carry no finalizer.** Deleting an Application, or setting
-  `argo.managed: false`, leaves everything it deployed in place.
-- **Services that ship CRDs have `argo.prune: false`.** Pruning a CRD deletes
-  every object of that kind, and for CloudNativePG that is the database.
-- **Objects that need their operator running carry
-  `argocd.argoproj.io/sync-wave: "1"`** (the address pool, the issuers).
-  Anything that applies a chart outside Argo CD has to apply in that order
-  too.
-- **A sync wave starts once every Application before it is healthy.** Argo CD
-  only knows the health of an Application through the
-  `argoproj.io_Application` health check in
-  `platform/argocd/values.tpl.yaml`, so the Argo CD that syncs `root` has to
-  be installed with those values.
-- **Namespaces are created by Argo CD**, never by a chart.
-- **Secrets are never rendered.** Charts refer to them by the names under
-  `secrets` and `postgres.databases` in `values.yaml`.
-- **Services first installed with Helm set `argo.migrateFrom: helm`**, so
-  Argo CD takes over field ownership instead of sharing it.
+```bash
+argocd app sync root
+```
 
-## Conventions
+**Try a branch.** Pause `root` first, or it puts everything back to `main`:
 
-### Names
+```bash
+argocd app set root --sync-policy none
+argocd app set gitea --revision my-branch
+# when you're done
+argocd app set root --sync-policy automated --self-heal --auto-prune
+```
 
-- **service**: one directory, one chart, one Application. The catalog in
-  `values.yaml` is `services`.
-- **database**: one entry of `postgres.databases`. The name is the role, the
-  database and its owner; `consumer.service` is the service that connects.
-- **homelab**: the name of everything the root chart owns. The chart, the
-  AppProject, the `homelab-config` ConfigMap, the `homelab.*` helpers and
-  the `HOMELAB_*` keys.
-- Helpers are named `<chart>.<what they return>`, in full words:
-  `homelab.namespace`, `homelab.postgres.host`, `pfo.selector`.
-- Keys of `homelab-config` are grouped: `HOMELAB_<VALUE>`,
-  `HOMELAB_SERVICE_<NAME>_<FIELD>`, `HOMELAB_DATABASE_<NAME>_<FIELD>`,
-  `HOMELAB_SECRET_<NAME>_<FIELD>`.
+## Rules
 
-### Templates (`templates/*.yaml`)
+Don't break these:
 
-- Two spaces. List items are indented under their key.
-- An action that produces no output (control flow, an assignment, a
-  comment) sits on its own line and starts with `{{-`. It does not end with
-  `-}}`.
-- A block inserted with `nindent` sits on its own line, indented like the
-  block it inserts, and the number is that indentation: the parent key's
-  plus two. The number therefore differs with depth; the pattern does not:
+- **No finalizers on Applications.** Deleting an Application leaves its stuff
+  running. With a finalizer, deleting the postgres Application would delete
+  the database.
+- **`prune: false` for anything that ships CRDs** (metallb, cert-manager,
+  cnpg, argocd), and for postgres. Pruning a CRD deletes every object of that
+  kind. For CloudNativePG that's the database.
+- **Objects that need their own chart's CRDs get
+  `argocd.argoproj.io/sync-wave: "1"`** (the MetalLB pool, the issuers). Their
+  Application also gets `SkipDryRunOnMissingResource=true`.
+- **Argo CD makes the namespaces** (`CreateNamespace=true`), not the charts.
+  pfo is the exception, it lives in `default`.
+- **No secrets in git.** They're made by hand, see below.
 
-  ```yaml
-  metadata:
-    labels:
-      {{- include "pfo.selector" . | nindent 4 }}
-  ```
+## Secrets
 
-- The parent key is always written in the template. A helper returns the
-  content of a block, never the key above it.
-- `toYaml <value> | nindent N`, value first. A required value is wrapped:
-  `toYaml (required "x is required" .Values.x) | nindent N`.
-- Every value a template cannot work without goes through `required`, with
-  the message `<key path> is required`.
-- Explanations are template comments, `{{- /* … */}}`, at the top of the
-  file or above the line they explain. Rendered manifests carry no
-  comments.
-- A file does not rebind `.` for its whole length; it assigns a variable
-  (`{{- $cluster := .Values.cluster }}`).
-- No blank lines inside an object.
-- In a `range` that emits objects, each starts with `---`.
+These are made by hand:
 
-### Helpers (`templates/_*.tpl`)
+| Secret | Namespace | What it is |
+|---|---|---|
+| `repo-k8s-stack` | argocd | The SSH key Argo CD uses to read this repo. |
+| `cloudflare-api-token` | cert-manager | The Cloudflare token for the DNS challenge. |
+| `pfo-db-creds`, `gitea-db-creds` | cnpg | The login of each database role. Postgres makes the roles from these. |
+| `pfo-db` | default | pfo's database login. |
+| `gitea-db-creds` | gitea | gitea's database login. Same as the one in cnpg. |
+| `gitea-admin` | gitea | gitea's admin user. |
 
-- `define` and its `end` trim on both sides (`{{- define "…" -}}`,
-  `{{- end -}}`), so a helper returns exactly its content, with no blank
-  line around it.
-- The root chart's helper files are logic, not YAML. Every action there is
-  on its own line and trims on both sides, so whitespace never reaches the
-  output and the code is laid out like code: nested two spaces per level,
-  with blank lines between steps.
+`wildcard-tls` in ingress-nginx isn't on the list. cert-manager makes it.
 
-  ```
-  {{- range $name, $service := .Values.services -}}
-    {{- if hasKey $dirs $service.dir -}}
-      {{- printf "services.%s.dir is already used\n" $name -}}
-    {{- end -}}
-  {{- end -}}
-  ```
+Keep a copy of the Cloudflare token and the repo key somewhere outside the
+cluster. A rebuild needs both.
 
-- A helper in a service chart that returns a block of YAML (`pfo.config`)
-  is content: it follows the template rules above.
-- Each `define` has a comment above it: name, arguments, what it returns.
-- A check belongs in `values.schema.json` when it concerns one value, and
-  in `templates/_validate.tpl` when it concerns how values relate. Each
-  `homelab.validate.<area>` helper prints one line per problem.
+## Rebuild from zero
 
-### Values files (`values.tpl.yaml`)
+Start with an empty cluster with Calico running.
 
-- Assignments first, one per line.
-- Then the values of the service's own templates, under a comment naming
-  the template file; then `# Upstream chart.` and the upstream values under
-  that chart's name.
-- Comments are YAML comments, full sentences, above the key they explain.
-- A value that exists in `values.yaml` is an expression, never a literal.
+1. Remove the label kubeadm puts on a single node. Without this, MetalLB never
+   announces from it:
+
+   ```bash
+   kubectl label node --all node.kubernetes.io/exclude-from-external-load-balancers-
+   ```
+
+2. Make the namespaces for the secrets, and the secrets:
+
+   ```bash
+   kubectl create namespace argocd
+   kubectl create namespace cert-manager
+   kubectl create namespace cnpg
+   kubectl create namespace gitea
+
+   kubectl -n argocd create secret generic repo-k8s-stack \
+       --from-literal=type=git \
+       --from-literal=url=git@github.com:umtdg/k8s-stack.git \
+       --from-file=sshPrivateKey="$HOME/.ssh/argocd_repo"
+   kubectl -n argocd label secret repo-k8s-stack argocd.argoproj.io/secret-type=repository
+
+   kubectl -n cert-manager create secret generic cloudflare-api-token \
+       --from-literal=api-token="$(tr -d '[:space:]' < ~/.cloudflare-token)"
+
+   pfo_password=$(openssl rand -hex 32)
+   gitea_password=$(openssl rand -hex 32)
+
+   kubectl -n cnpg create secret generic pfo-db-creds --type=kubernetes.io/basic-auth \
+       --from-literal=username=portfolio --from-literal=password="$pfo_password"
+   kubectl -n cnpg create secret generic gitea-db-creds --type=kubernetes.io/basic-auth \
+       --from-literal=username=gitea --from-literal=password="$gitea_password"
+
+   kubectl -n default create secret generic pfo-db \
+       --from-literal=username=portfolio --from-literal=password="$pfo_password"
+   kubectl -n gitea create secret generic gitea-db-creds --type=kubernetes.io/basic-auth \
+       --from-literal=username=gitea --from-literal=password="$gitea_password"
+
+   kubectl -n gitea create secret generic gitea-admin \
+       --from-literal=username=umtdg --from-literal=password="$(openssl rand -hex 48)"
+   ```
+
+3. Install Argo CD and hand over to `root`, then watch everything come up in
+   order:
+
+   ```bash
+   make bootstrap
+   kubectl -n argocd get applications -w
+   ```
+
+4. When everything is healthy, delete Helm's record of Argo CD, so that only
+   Argo CD manages itself from now on:
+
+   ```bash
+   kubectl -n argocd delete secret -l owner=helm,name=argocd
+   ```
+
+To get the databases back, restore them from a `pg_dump` backup, like in
+[MIGRATION.md](MIGRATION.md#if-something-goes-wrong).
+
+## When something goes wrong
+
+**`root` waits forever.** A service in an earlier wave never gets healthy. For
+example, the ingress VIP is outside the MetalLB pool, so the ingress never
+gets an IP. Push a fix, then:
+
+```bash
+argocd app terminate-op root
+```
+
+**`root` shows an error and does nothing.** The root chart doesn't render. Run
+`make test` to see why. Everything that already runs keeps running.
 
 ## During the migration
 
-Each service directory still holds the script and manifests it was installed
-with (`apply.sh`, `spec.yaml`, `legacy-values.yaml`, …). They are what is
-live until the service is switched to its chart, and are removed then.
-`platform/cnpg/apply.sh` still installs the operator as well as the cluster.
-[`MIGRATION.md`](MIGRATION.md) is the order of the switch.
+The switch from the old `apply.sh` installs isn't done yet. See
+[MIGRATION.md](MIGRATION.md). Until then:
+
+- the old install files are still in the service folders;
+- some settings are only there for the switch: the
+  `client-side-apply-migration-manager` annotation on ingress-nginx, gitea and
+  argocd, and `legacyEnvFromSecret: pfo-secret` for pfo. pfo still logs in with
+  the old `pfo-secret`.
+
+Step 7 of MIGRATION.md removes all of that, and this section too.
+
+## Later
+
+Left out for now, to keep things simple:
+
+- checks for `values.yaml`, like a schema, or making sure the VIP is in the pool;
+- CI that runs `make deps test` on every push;
+- pinning pfo's image instead of using `latest`;
+- replacing ingress-nginx, which hasn't had any updates since March 2026;
+- backups for Postgres and Gitea to somewhere off the node.

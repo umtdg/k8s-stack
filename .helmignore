@@ -12,3 +12,6 @@ tests/
 bin/
 lib/
 bootstrap/
+
+platform/
+apps/

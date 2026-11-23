@@ -1,29 +1,27 @@
-{{- include "homelab.validate" . }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: root
-  namespace: {{ include "homelab.argocd.namespace" . }}
+  namespace: argocd
 spec:
   project: default
   source:
     repoURL: {{ .Values.repo.url }}
-    path: generated
     targetRevision: {{ .Values.repo.revision | quote }}
-    helm:
-      releaseName: {{ .Chart.Name }}
+    path: .
   destination:
     server: https://kubernetes.default.svc
-    namespace: {{ include "homelab.argocd.namespace" . }}
+    namespace: argocd
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
-    {{- /* No limit: Argo CD never retries a failed automatic sync of the same commit by itself, and every later wave would wait for the next commit. */}}
+    {{- /* No limit: Argo CD never retries a failed automatic sync of the same */}}
+    {{- /* commit by itself, and every later wave would wait for the next commit. */}}
     retry:
       limit: -1
       refresh: true
       backoff:
-        {{- toYaml .Values.argoDefaults.retry.backoff | nindent 8 }}
+        {{- toYaml .Values.retry.backoff | nindent 8 }}

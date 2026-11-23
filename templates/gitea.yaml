@@ -1,0 +1,125 @@
+{{- $host := printf "git.%s" .Values.domain }}
+{{- $database := .Values.postgres.databases.gitea }}
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gitea
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/client-side-apply-migration-manager: helm
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repo.url }}
+    targetRevision: {{ .Values.repo.revision | quote }}
+    path: apps/gitea
+    helm:
+      valuesObject:
+        gitea:
+          strategy:
+            type: Recreate
+          image:
+            rootless: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          persistence:
+            enabled: true
+            create: true
+            claimName: gitea-shared-storage
+            storageClass: {{ .Values.storage.className }}
+            size: 20Gi
+            accessModes:
+              - ReadWriteOnce
+            annotations:
+              helm.sh/resource-policy: keep
+              argocd.argoproj.io/sync-options: Prune=false,Delete=false
+          service:
+            http:
+              type: ClusterIP
+              port: 3000
+            ssh:
+              type: ClusterIP
+              port: {{ .Values.gitea.ssh.port }}
+              clusterIP: ""
+          ingress:
+            enabled: true
+            className: {{ .Values.ingress.className }}
+            annotations:
+              {{- toYaml .Values.ingress.annotations | nindent 14 }}
+              nginx.ingress.kubernetes.io/proxy-body-size: 512m
+            tls: []
+            hosts:
+              - host: {{ $host }}
+                paths:
+                  - path: /
+                    pathType: Prefix
+          gitea:
+            admin:
+              existingSecret: gitea-admin
+              email: {{ .Values.owner.email }}
+              passwordMode: initialOnlyRequireReset
+            additionalConfigFromEnvs:
+              - name: GITEA__DATABASE__USER
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ $database.consumer.secret }}
+                    key: username
+              - name: GITEA__DATABASE__PASSWD
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ $database.consumer.secret }}
+                    key: password
+            config:
+              APP_NAME: {{ $host }}
+              database:
+                DB_TYPE: postgres
+                HOST: {{ printf "%s-rw.%s.svc.cluster.local:%v" .Values.postgres.cluster .Values.postgres.namespace .Values.postgres.port }}
+                NAME: {{ $database.name }}
+                SSL_MODE: require
+              server:
+                DOMAIN: {{ $host }}
+                ROOT_URL: https://{{ $host }}/
+                SSH_DOMAIN: {{ $host }}
+                SSH_PORT: {{ .Values.gitea.ssh.port | quote }}
+                SSH_LISTEN_PORT: "2222"
+                LFS_START_SERVER: true
+              service:
+                DISABLE_REGISTRATION: true
+                REQUIRE_SIGNIN_VIEW: true
+              repository:
+                DEFAULT_PRIVATE: private
+                DEFAULT_BRANCH: main
+              session:
+                PROVIDER: db
+              actions:
+                ENABLED: true
+          redis-cluster:
+            enabled: false
+          postgresql:
+            enabled: false
+          postgresql-ha:
+            enabled: false
+          valkey:
+            enabled: false
+          valkey-cluster:
+            enabled: false
+          test:
+            enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.gitea.namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
+    retry:
+      {{- toYaml .Values.retry | nindent 6 }}

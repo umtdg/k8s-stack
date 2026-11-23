@@ -1,0 +1,54 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-nginx
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-15"
+    argocd.argoproj.io/client-side-apply-migration-manager: helm
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repo.url }}
+    targetRevision: {{ .Values.repo.revision | quote }}
+    path: platform/ingress-nginx
+    helm:
+      valuesObject:
+        wildcard:
+          name: wildcard
+          secretName: {{ .Values.ingress.wildcardSecret }}
+          issuer: {{ .Values.tls.issuer.prod }}
+          dnsNames:
+            - {{ .Values.domain }}
+            - {{ printf "*.%s" .Values.domain | quote }}
+        ingress-nginx:
+          controller:
+            service:
+              annotations:
+                metallb.io/loadBalancerIPs: {{ .Values.network.ingressVIP }}
+            ingressClass: {{ .Values.ingress.className }}
+            ingressClassResource:
+              name: {{ .Values.ingress.className }}
+              default: true
+            extraArgs:
+              default-ssl-certificate: ingress-nginx/{{ .Values.ingress.wildcardSecret }}
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+            metrics:
+              enabled: false
+          tcp:
+            {{ .Values.gitea.ssh.port | quote }}: {{ printf "%s/gitea-ssh:%v" .Values.gitea.namespace .Values.gitea.ssh.port | quote }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ingress-nginx
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
+    retry:
+      {{- toYaml .Values.retry | nindent 6 }}

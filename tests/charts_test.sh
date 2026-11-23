@@ -11,13 +11,12 @@ yq --version | grep -q mikefarah || { echo 'charts_test.sh needs mikefarah yq' >
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 rc=0
 
-apps=$(helm template homelab "$ROOT" -s templates/applications.yaml) || exit 1
+apps=$(helm template homelab "$ROOT") || exit 1
 repo=$(yq '.repo.url' "$ROOT/values.yaml")
 
-for name in $(yq -N 'select(.spec.source.repoURL == "'"$repo"'") | .metadata.name' <<<"$apps"); do
+for name in $(yq -N 'select(.kind == "Application" and .spec.source.repoURL == "'"$repo"'" and .metadata.name != "root") | .metadata.name' <<<"$apps"); do
     app=$(yq 'select(.metadata.name == "'"$name"'")' <<<"$apps")
     path=$(yq '.spec.source.path' <<<"$app")
-    release=$(yq '.spec.source.helm.releaseName' <<<"$app")
     namespace=$(yq '.spec.destination.namespace' <<<"$app")
 
     if [[ "$(yq '.dependencies | length' "$ROOT/$path/Chart.yaml")" != 0 && ! -d "$ROOT/$path/charts" ]]; then
@@ -28,7 +27,7 @@ for name in $(yq -N 'select(.spec.source.repoURL == "'"$repo"'") | .metadata.nam
 
     if out=$(
         yq '.spec.source.helm.valuesObject // {}' <<<"$app" \
-            | helm template "$release" "$ROOT/$path" -n "$namespace" --include-crds -f - 2>&1
+            | helm template "$name" "$ROOT/$path" -n "$namespace" --include-crds -f - 2>&1
     ) && [[ -n "$out" ]]; then
         printf 'OK: %s renders %d objects (%s)\n' "$name" "$(grep -c '^kind:' <<<"$out")" "$path"
     else

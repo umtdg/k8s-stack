@@ -1,0 +1,46 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repo.url }}
+    targetRevision: {{ .Values.repo.revision | quote }}
+    path: platform/cert-manager
+    helm:
+      valuesObject:
+        email: {{ .Values.owner.email }}
+        cloudflare:
+          secret: cloudflare-api-token
+          key: api-token
+        issuers:
+          - name: letsencrypt-staging
+            server: https://acme-staging-v02.api.letsencrypt.org/directory
+            accountKeySecret: le-staging-key
+          - name: {{ .Values.tls.issuer.prod }}
+            server: https://acme-v02.api.letsencrypt.org/directory
+            accountKeySecret: le-key
+        cert-manager:
+          crds:
+            enabled: true
+            keep: true
+          extraArgs:
+            - --dns01-recursive-nameservers-only
+            - --dns01-recursive-nameservers=1.1.1.1:53,9.9.9.9:53
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      {{- toYaml .Values.retry | nindent 6 }}

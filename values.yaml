@@ -2,14 +2,20 @@ repo:
   url: git@github.com:umtdg/k8s-stack.git
   revision: main
 
+retry:
+  limit: 5
+  refresh: true
+  backoff:
+    duration: 10s
+    factor: 2
+    maxDuration: 3m
+
 domain: umtdg.com
 
 owner:
   email: me@umtdg.com
-  user: umtdg
 
 network:
-  nodeIP: 10.10.10.2
   ingressVIP: 10.10.10.200
   pool:
     name: lan
@@ -20,139 +26,36 @@ network:
 ingress:
   className: nginx
   wildcardSecret: wildcard-tls
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 
 tls:
   issuer:
     prod: letsencrypt
-    staging: letsencrypt-staging
-  resolvers:
-    - 1.1.1.1:53
-    - 9.9.9.9:53
 
 storage:
   className: local-path
-  hostPath: /mnt/data/local-path
 
 postgres:
   cluster: pg
+  namespace: cnpg
   port: 5432
+  # One database per service under the service's name:
+  #   - secret:         in the postgres' namespace, the database role
+  #   - consumer.secret in the service's namespace, what the service logs in with
   databases:
-    - name: portfolio
+    pfo:
+      name: portfolio
       secret: pfo-db-creds
       consumer:
-        service: pfo
         secret: pfo-db
-    - name: gitea
+    gitea:
+      name: gitea
       secret: gitea-db-creds
       consumer:
-        service: gitea
         secret: gitea-db-creds
 
-secrets:
-  cloudflare:
-    service: cert-manager
-    name: cloudflare-api-token
-    key: api-token
-  giteaAdmin:
-    service: gitea
-    name: gitea-admin
-  argoRepo:
-    service: argocd
-    name: repo-k8s-stack
-
-argoDefaults:
-  project: homelab
-  automated: true
-  prune: true
-  selfHeal: true
-  syncOptions:
-    - ServerSideApply=true
-  retry:
-    limit: 5
-    refresh: true
-    backoff:
-      duration: 10s
-      factor: 2
-      maxDuration: 3m
-  ignoreDifferences: []
-  migrateFrom: ""
-
-services:
-  metallb:
-    dir: platform/metallb
-    wave: -30
-    namespace: metallb-system
-    namespaceLabels:
-      pod-security.kubernetes.io/enforce: privileged
-      pod-security.kubernetes.io/audit: privileged
-      pod-security.kubernetes.io/warn: privileged
-    skipDryRunOnMissingResource: true
-    argo:
-      prune: false
-
-  local-path:
-    dir: platform/local-path
-    wave: -25
-    namespace: local-path-storage
-    git:
-      repo: https://github.com/rancher/local-path-provisioner.git
-      path: deploy/chart/local-path-provisioner
-      ref: v0.0.37
-
-  cert-manager:
-    dir: platform/cert-manager
-    wave: -20
-    namespace: cert-manager
-    skipDryRunOnMissingResource: true
-    argo:
-      prune: false
-
-  ingress-nginx:
-    dir: platform/ingress-nginx
-    wave: -15
-    namespace: ingress-nginx
-    argo:
-      migrateFrom: helm
-
-  cnpg:
-    dir: platform/cnpg
-    wave: -10
-    namespace: cnpg-system
-    argo:
-      prune: false
-
-  postgres:
-    dir: platform/postgres
-    wave: -5
-    namespace: cnpg
-    argo:
-      prune: false
-
-  pfo:
-    dir: apps/pfo
-    wave: 0
-    namespace: default
-    createNamespace: false
-    host: pfo
-    legacyEnvFromSecret: pfo-secret
-
-  gitea:
-    dir: apps/gitea
-    wave: 0
-    namespace: gitea
-    host: git
-    ssh:
-      port: 22
-      listenPort: 2222
-    argo:
-      migrateFrom: helm
-
-  argocd:
-    dir: platform/argocd
-    wave: 10
-    namespace: argocd
-    host: argo
-    argo:
-      prune: false
-      selfHeal: false
-      migrateFrom: helm
+gitea:
+  namespace: gitea
+  ssh:
+    port: 22
